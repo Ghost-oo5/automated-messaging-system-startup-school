@@ -225,7 +225,14 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
             return null
           }
 
-          const locationSelectors = [".location", ".country", "[data-country]", ".profile-location"]
+          const locationSelectors = [
+            ".location",
+            ".country",
+            "[data-country]",
+            ".profile-location",
+            "[title='Location']",
+            ".css-1jvurm9"
+          ]
           let country: string | undefined
           for (const selector of locationSelectors) {
             const element = document.querySelector(selector)

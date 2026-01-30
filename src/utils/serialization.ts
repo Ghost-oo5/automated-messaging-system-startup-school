@@ -1,10 +1,16 @@
 import type { CustomerProfile } from "~/types"
 
-/**
- * Serializes a profile for Chrome message passing
- * Converts all non-serializable types (Dates, etc.) to serializable formats
- */
+
 export function serializeProfile(profile: CustomerProfile): any {
+  const safeDate = (value: any, fallbackNow = false) => {
+    const d =
+      value instanceof Date ? value : value ? new Date(value) : fallbackNow ? new Date() : null
+    return d && !Number.isNaN(d.getTime()) ? d : fallbackNow ? new Date() : null
+  }
+
+  const collected = safeDate(profile.collectedAt, true)
+  const lastSent = safeDate(profile.lastMessageSent, false)
+
   return {
     id: profile.id,
     name: profile.name,
@@ -15,12 +21,8 @@ export function serializeProfile(profile: CustomerProfile): any {
     interests: profile.interests ? [...profile.interests] : undefined,
     bio: profile.bio,
     profileUrl: profile.profileUrl,
-    collectedAt: profile.collectedAt instanceof Date 
-      ? profile.collectedAt.toISOString() 
-      : (profile.collectedAt ? new Date(profile.collectedAt).toISOString() : new Date().toISOString()),
-    lastMessageSent: profile.lastMessageSent instanceof Date
-      ? profile.lastMessageSent.toISOString()
-      : (profile.lastMessageSent ? new Date(profile.lastMessageSent).toISOString() : undefined),
+    collectedAt: collected ? collected.toISOString() : new Date().toISOString(),
+    lastMessageSent: lastSent ? lastSent.toISOString() : undefined,
     messageCount: profile.messageCount || 0
   }
 }

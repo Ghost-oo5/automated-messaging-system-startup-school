@@ -22,6 +22,7 @@ import { MessageDeliveryService } from "~/services/messageDelivery"
 import { filterProfiles } from "~/utils/filter"
 import { COUNTRIES, AGE_GROUPS, INTERESTS, OPENAI_MODELS } from "~/utils/constants"
 import { serializeProfile } from "~/utils/serialization"
+import { createPortal } from "react-dom"
 
 type Tab = "dashboard" | "filters" | "settings" | "profiles" | "messages"
 
@@ -58,8 +59,9 @@ function IndexPopup() {
   const [isSending, setIsSending] = useState(false)
   const [sendStatus, setSendStatus] = useState<string | null>(null)
   const [messageHistory, setMessageHistory] = useState<MessageHistory[]>([])
-  const [selectedProfileMessages, setSelectedProfileMessages] = useState<MessageHistory[]>([])
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
+  const [modalProfile, setModalProfile] = useState<CustomerProfile | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -409,6 +411,10 @@ function IndexPopup() {
             isSending={isSending}
             sendStatus={sendStatus}
             onSendMessage={handleSendTestMessage}
+            onSelectProfile={(profile) => {
+              setModalProfile(profile)
+              setIsModalOpen(true)
+            }}
             onViewMessages={(profileId) => {
               setSelectedProfileId(profileId)
               setActiveTab("messages")
@@ -425,6 +431,89 @@ function IndexPopup() {
           />
         )}
       </div>
+      {isModalOpen && modalProfile &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setIsModalOpen(false)} />
+            <div className="relative z-10 w-[90%] max-w-2xl max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-xl p-5 space-y-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">{modalProfile.name}</h3>
+                  <p className="text-sm text-gray-600">
+                    {modalProfile.country || "Location not set"} • {modalProfile.ageGroup || "Age not set"}
+                  </p>
+                  {modalProfile.profileUrl && (
+                    <a
+                      href={modalProfile.profileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 text-sm underline">
+                      View profile
+                    </a>
+                  )}
+                </div>
+                <button
+                  className="text-gray-500 hover:text-gray-800 text-xl leading-none"
+                  onClick={() => setIsModalOpen(false)}>
+                  ×
+                </button>
+              </div>
+
+              <div className="text-sm text-gray-700 space-y-2">
+                <p><span className="font-semibold">Last Messaged:</span> {modalProfile.lastMessageSent ? formatDateTime(modalProfile.lastMessageSent) : "Never"}</p>
+                <p><span className="font-semibold">Message Count:</span> {modalProfile.messageCount ?? 0}</p>
+                {modalProfile.age && (
+                  <p><span className="font-semibold">Age:</span> {modalProfile.age}</p>
+                )}
+              </div>
+
+              {modalProfile.interests && modalProfile.interests.length > 0 && (
+                <div className="space-y-1">
+                  <p className="font-semibold text-sm text-gray-800">Interests</p>
+                  <div className="flex flex-wrap gap-1">
+                    {modalProfile.interests.map((interest, idx) => (
+                      <span
+                        key={idx}
+                        className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
+                        {interest}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {modalProfile.bio && (
+                <div className="space-y-1">
+                  <p className="font-semibold text-sm text-gray-800">Description</p>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap max-h-60 overflow-y-auto">
+                    {modalProfile.bio}
+                  </p>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    handleSendTestMessage(modalProfile)
+                    setIsModalOpen(false)
+                  }}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm font-medium">
+                  Send Message
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedProfileId(modalProfile.id)
+                    setActiveTab("messages")
+                    setIsModalOpen(false)
+                  }}
+                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 text-sm font-medium">
+                  View History
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }
@@ -850,12 +939,14 @@ function ProfilesTab({
   isSending,
   sendStatus,
   onSendMessage,
+  onSelectProfile,
   onViewMessages
 }: { 
   profiles: CustomerProfile[]
   isSending: boolean
   sendStatus: string | null
   onSendMessage: (profile: CustomerProfile) => void
+  onSelectProfile: (profile: CustomerProfile) => void
   onViewMessages: (profileId: string) => void
 }) {
   return (
@@ -885,56 +976,28 @@ function ProfilesTab({
             profiles.map((profile) => (
               <div
                 key={profile.id}
-                className="bg-white rounded-lg p-3 shadow-sm border border-gray-200">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <h4 className="font-medium text-gray-800">{profile.name}</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 mt-1">
-                      <span><span className="font-semibold">Country:</span> {profile.country || "Not set"}</span>
-                      <span><span className="font-semibold">Age Group:</span> {profile.ageGroup || "Not set"}</span>
-                      <span><span className="font-semibold">Collected:</span> {formatDateTime(profile.collectedAt)}</span>
-                      <span>
-                        <span className="font-semibold">Last Messaged:</span>{" "}
-                        {profile.lastMessageSent ? formatDateTime(profile.lastMessageSent) : "Never"}
-                      </span>
-                      <span><span className="font-semibold">Profile URL:</span> {profile.profileUrl || "Not captured"}</span>
-                      <span><span className="font-semibold">Message Count:</span> {profile.messageCount ?? 0}</span>
-                    </div>
-                    {profile.interests && profile.interests.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {profile.interests.map((interest, idx) => (
-                          <span
-                            key={idx}
-                            className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
-                            {interest}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {profile.bio && (
-                      <p className="text-sm text-gray-700 mt-2 whitespace-pre-wrap">
-                        {profile.bio}
-                      </p>
-                    )}
-                  </div>
-                  <div className="text-right space-y-1">
-                    <p className="text-xs text-gray-500">
-                      {profile.messageCount} sent
-                    </p>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => onViewMessages(profile.id)}
-                        className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-700">
-                        History
-                      </button>
-                      <button
-                        onClick={() => onSendMessage(profile)}
-                        disabled={isSending}
-                        className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                        {isSending ? "Sending..." : "Send"}
-                      </button>
-                    </div>
-                  </div>
+                className="bg-white rounded-lg p-3 shadow-sm border border-gray-200 flex items-center justify-between">
+                <button
+                  onClick={() => onSelectProfile(profile)}
+                  className="text-left flex-1 pr-3">
+                  <p className="font-medium text-gray-800">{profile.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {profile.country || "Unknown location"} •{" "}
+                    {profile.interests?.slice(0, 2).join(", ") || "No interests"}
+                  </p>
+                </button>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => onViewMessages(profile.id)}
+                    className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-700">
+                    History
+                  </button>
+                  <button
+                    onClick={() => onSendMessage(profile)}
+                    disabled={isSending}
+                    className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    {isSending ? "Sending..." : "Send"}
+                  </button>
                 </div>
               </div>
             ))

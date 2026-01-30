@@ -47,7 +47,9 @@ export function extractProfileFromPage(document: Document): CustomerProfile | nu
       ".candidate-location",
       "[data-candidate-location]",
       ".cofounder-location",
-      ".location-text"
+      ".location-text",
+      "[title='Location']",
+      ".css-1jvurm9"
     ]
     let country: string | undefined
     for (const selector of locationSelectors) {
