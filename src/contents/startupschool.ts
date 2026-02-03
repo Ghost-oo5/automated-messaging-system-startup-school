@@ -12,17 +12,27 @@ export const config: PlasmoCSConfig = {
 }
 
 // Listen for messages from background script
+async function waitForProfile(timeoutMs = 12000, intervalMs = 500) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const profile = extractProfileFromPage(document)
+    if (profile) return profile
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+  return null
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "extractProfile") {
-    const profile = extractProfileFromPage(document)
-    if (profile) {
-      // Serialize profile for message passing
-      const serializedProfile = serializeProfile(profile)
-      sendResponse({ profile: serializedProfile })
-    } else {
-      sendResponse({ profile: null })
-    }
-    return true // Keep channel open for async response
+    waitForProfile().then((profile) => {
+      if (profile) {
+        const serializedProfile = serializeProfile(profile)
+        sendResponse({ profile: serializedProfile })
+      } else {
+        sendResponse({ profile: null })
+      }
+    })
+    return true
   }
 })
 
@@ -33,17 +43,15 @@ if (
   window.location.pathname.includes("/profile")
 ) {
   window.addEventListener("load", () => {
-    setTimeout(() => {
-      const profile = extractProfileFromPage(document)
+    setTimeout(async () => {
+      const profile = await waitForProfile()
       if (profile) {
-        // Serialize profile for message passing
         const serializedProfile = serializeProfile(profile)
-        // Send profile to background script
         chrome.runtime.sendMessage({
           action: "profileExtracted",
           profile: serializedProfile
         })
       }
-    }, 2000) // Wait for page to fully load
+    }, 2000)
   })
 }

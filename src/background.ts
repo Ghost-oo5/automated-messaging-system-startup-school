@@ -180,9 +180,9 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
         chrome.tabs.sendMessage(tab.id, { action: "extractProfile" }),
         new Promise((_, reject) => 
           setTimeout(() => {
-            console.warn("[Profile Extraction] Content script timeout after 3 seconds")
+            console.warn("[Profile Extraction] Content script timeout after 8 seconds")
             reject(new Error("Content script timeout"))
-          }, 3000)
+          }, 8000)
         )
       ]) as any
       
@@ -207,10 +207,23 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
     try {
       results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => {
+        func: async () => {
           console.log("[Profile Extraction] Injected script running...")
           // Direct extraction logic (simplified version)
           try {
+          const waitFor = (fn: () => boolean, timeout = 12000, interval = 400) =>
+            new Promise<boolean>((resolve) => {
+              const start = Date.now()
+              const tick = () => {
+                if (fn()) return resolve(true)
+                if (Date.now() - start > timeout) return resolve(false)
+                setTimeout(tick, interval)
+              }
+              tick()
+            })
+
+          await waitFor(() => Boolean(document.querySelector("h1") || document.querySelector(".css-y9z691")))
+
           const nameSelectors = ["h1", ".profile-name", "[data-name]", ".user-name", ".name"]
           let name = "Unknown"
           for (const selector of nameSelectors) {
@@ -244,6 +257,13 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
               }
               break
             }
+          }
+
+          let age: number | undefined
+          const ageEl = document.querySelector('[title="Age"]')
+          if (ageEl?.textContent) {
+            const match = ageEl.textContent.match(/(\d{1,3})/)
+            if (match) age = parseInt(match[1], 10)
           }
 
           const bioSelectors = [
@@ -334,6 +354,7 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
             id: profileId,
             name,
             country,
+            age,
             bio,
             interests: interests.slice(0, 10),
             profileUrl,
