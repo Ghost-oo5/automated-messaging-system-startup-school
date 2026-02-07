@@ -7,8 +7,19 @@ function IndexNewtab() {
   const [messagesCount, setMessagesCount] = useState(0)
 
   useEffect(() => {
-    getProfiles().then(p => setProfilesCount(p.length))
-    getMessageHistory().then(m => setMessagesCount(m.length))
+    const load = () => {
+      getProfiles().then(p => setProfilesCount(p.length))
+      getMessageHistory().then(m => setMessagesCount(m.length))
+    }
+    load()
+
+    const listener = (changes: any, area: string) => {
+      if (area === "local" && (changes.profiles || changes.messageHistory)) {
+        load()
+      }
+    }
+    chrome.storage.onChanged.addListener(listener)
+    return () => chrome.storage.onChanged.removeListener(listener)
   }, [])
 
   return (

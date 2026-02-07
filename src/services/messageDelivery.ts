@@ -6,9 +6,12 @@ export class MessageDeliveryService {
   private rateLimiter: RateLimiter
   private settings: AutomationSettings
 
+  public ready: Promise<void>
+
   constructor(settings: AutomationSettings) {
     this.settings = settings
     this.rateLimiter = new RateLimiter(settings)
+    this.ready = this.rateLimiter.ready
   }
 
   async generateDraft(profile: CustomerProfile): Promise<string> {
@@ -223,7 +226,7 @@ export class MessageDeliveryService {
     return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
-  getStats() {
+  async getStats() {
     return this.rateLimiter.getStats()
   }
 

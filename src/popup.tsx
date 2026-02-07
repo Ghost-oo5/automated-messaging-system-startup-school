@@ -14,6 +14,7 @@ import {
   saveFilterSettings,
   getProfiles,
   getMessageHistory,
+  getMessageStats,
   clearAllData
 } from "~/utils/storage"
 import { initializeOpenAI } from "~/services/openai"
@@ -64,6 +65,21 @@ function IndexPopup() {
 
   useEffect(() => {
     loadData()
+
+    // Watch for storage changes to keep stats synced
+    const listener = (changes: any, area: string) => {
+      if (area === "local" && changes.messageStats) {
+        setStats(changes.messageStats.newValue)
+      }
+      if (area === "local" && changes.messageHistory) {
+        setMessageHistory(changes.messageHistory.newValue)
+      }
+      if (area === "local" && changes.profiles) {
+        setProfiles(changes.profiles.newValue)
+      }
+    }
+    chrome.storage.onChanged.addListener(listener)
+    return () => chrome.storage.onChanged.removeListener(listener)
   }, [])
 
   useEffect(() => {
@@ -76,9 +92,6 @@ function IndexPopup() {
     if (automationSettings && filterSettings) {
       const service = new MessageDeliveryService(automationSettings)
       setMessageDelivery(service)
-      if (service) {
-        setStats(service.getStats())
-      }
     }
   }, [automationSettings])
 
@@ -92,16 +105,18 @@ function IndexPopup() {
   }, [profiles, filterSettings])
 
   async function loadData() {
-    const [settings, filters, profileList, history] = await Promise.all([
+    const [settings, filters, profileList, history, currentStats] = await Promise.all([
       getAutomationSettings(),
       getFilterSettings(),
       getProfiles(),
-      getMessageHistory()
+      getMessageHistory(),
+      getMessageStats()
     ])
     setAutomationSettings(settings)
     setFilterSettings(filters)
     setProfiles(profileList)
     setMessageHistory(history)
+    setStats(currentStats)
     setApiKeyInput(settings.openaiApiKey || "")
     setSenderNameInput(settings.senderName || "")
   }
@@ -249,7 +264,6 @@ function IndexPopup() {
       if (response.success) {
         setSendStatus({ type: 'ok', msg: `Sent to ${targetProfile.name}` })
         await loadData()
-        if (messageDelivery) setStats(messageDelivery.getStats())
         if (isModalOpen) {
           setTimeout(() => setIsModalOpen(false), 1500)
         }

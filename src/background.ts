@@ -25,7 +25,9 @@ async function initializeServices() {
   // Initialize message delivery service
   if (settings.openaiApiKey) {
     initializeOpenAI(settings.openaiApiKey)
-    messageDeliveryService = new MessageDeliveryService(settings)
+    const service = new MessageDeliveryService(settings)
+    await service.ready
+    messageDeliveryService = service
   }
 
   if (settings.enabled) {

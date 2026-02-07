@@ -4,6 +4,8 @@ export class RateLimiter {
   private settings: AutomationSettings
   private stats: MessageStats
 
+  public ready: Promise<void>
+
   constructor(settings: AutomationSettings) {
     this.settings = settings
     this.stats = {
@@ -12,7 +14,7 @@ export class RateLimiter {
       messagesToday: 0,
       messagesThisHour: 0
     }
-    this.loadStats()
+    this.ready = this.loadStats()
   }
 
   private async loadStats(): Promise<void> {
@@ -64,6 +66,7 @@ export class RateLimiter {
   }
 
   async canSendMessage(): Promise<{ allowed: boolean; reason?: string; waitTime?: number }> {
+    await this.ready
     this.updateTimeBasedCounts()
 
     // Check daily limit
@@ -103,6 +106,7 @@ export class RateLimiter {
   }
 
   async recordMessageSent(): Promise<void> {
+    await this.ready
     this.stats.totalSent++
     this.stats.messagesToday++
     this.stats.messagesThisHour++
@@ -111,11 +115,13 @@ export class RateLimiter {
   }
 
   async recordMessageFailed(): Promise<void> {
+    await this.ready
     this.stats.totalFailed++
     await this.saveStats()
   }
 
-  getStats(): MessageStats {
+  async getStats(): Promise<MessageStats> {
+    await this.ready
     this.updateTimeBasedCounts()
     return { ...this.stats }
   }

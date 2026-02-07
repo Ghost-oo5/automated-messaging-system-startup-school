@@ -3,7 +3,8 @@ import type {
   AutomationSettings,
   FilterSettings,
   MessageTemplate,
-  MessageHistory
+  MessageHistory,
+  MessageStats
 } from "~/types"
 
 const DEFAULT_SETTINGS: AutomationSettings = {
@@ -43,13 +44,13 @@ export async function saveProfile(profile: CustomerProfile): Promise<void> {
   try {
     const profiles = await getProfiles()
     const index = profiles.findIndex((p) => p.id === profile.id)
-    
+
     if (index >= 0) {
       profiles[index] = profile
     } else {
       profiles.push(profile)
     }
-    
+
     await chrome.storage.local.set({ profiles })
   } catch (error) {
     console.error("Error saving profile:", error)
@@ -137,6 +138,26 @@ export async function getMessagesForProfile(profileId: string): Promise<MessageH
   } catch (error) {
     console.error("Error getting messages for profile:", error)
     return []
+  }
+}
+
+export async function getMessageStats(): Promise<MessageStats> {
+  try {
+    const result = await chrome.storage.local.get("messageStats")
+    return result.messageStats || {
+      totalSent: 0,
+      totalFailed: 0,
+      messagesToday: 0,
+      messagesThisHour: 0
+    }
+  } catch (error) {
+    console.error("Error getting message stats:", error)
+    return {
+      totalSent: 0,
+      totalFailed: 0,
+      messagesToday: 0,
+      messagesThisHour: 0
+    }
   }
 }
 
