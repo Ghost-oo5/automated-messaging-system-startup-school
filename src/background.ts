@@ -21,29 +21,29 @@ chrome.runtime.onStartup.addListener(async () => {
 
 async function initializeServices() {
   const settings = await getAutomationSettings()
-  
+
   // Initialize message delivery service
   if (settings.openaiApiKey) {
     initializeOpenAI(settings.openaiApiKey)
     messageDeliveryService = new MessageDeliveryService(settings)
   }
-  
+
   if (settings.enabled) {
     startAutomation(settings)
   }
 }
 
-async function sendTestMessage(profileData: any): Promise<{ success: boolean; message?: string; error?: string }> {
+async function sendTestMessage(profileData: any, customMessage?: string): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
     const settings = await getAutomationSettings()
-    
+
     if (!settings.openaiApiKey) {
       return { success: false, error: "OpenAI API key not configured. Please set it in Settings tab." }
     }
-    
+
     // Deserialize profile
     const profile = deserializeProfile(profileData)
-    
+
     // Initialize OpenAI if not already done
     if (!messageDeliveryService) {
       initializeOpenAI(settings.openaiApiKey)
@@ -52,13 +52,42 @@ async function sendTestMessage(profileData: any): Promise<{ success: boolean; me
       // Update settings in case they changed
       messageDeliveryService.updateSettings(settings)
     }
-    
+
     // Send the message
-    const result = await messageDeliveryService.sendMessage(profile)
-    
+    const result = await messageDeliveryService.sendMessage(profile, customMessage)
+
     return result
   } catch (error) {
     console.error("Error sending test message:", error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    }
+  }
+}
+
+async function generateDraft(profileData: any): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const settings = await getAutomationSettings()
+
+    if (!settings.openaiApiKey) {
+      return { success: false, error: "OpenAI API key not configured." }
+    }
+
+    const profile = deserializeProfile(profileData)
+
+    if (!messageDeliveryService) {
+      initializeOpenAI(settings.openaiApiKey)
+      messageDeliveryService = new MessageDeliveryService(settings)
+    } else {
+      messageDeliveryService.updateSettings(settings)
+    }
+
+    const message = await messageDeliveryService.generateDraft(profile)
+
+    return { success: true, message }
+  } catch (error) {
+    console.error("Error generating draft:", error)
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error"
@@ -72,7 +101,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     handleProfileExtracted(request.profile)
     sendResponse({ success: true })
   }
-  
+
   if (request.action === "extractCurrentProfile") {
     console.log("[Background] Received extractCurrentProfile request")
     extractCurrentProfile()
@@ -84,14 +113,14 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
       })
       .catch((error) => {
         console.error("[Background] Extraction failed:", error)
-        sendResponse({ 
-          success: false, 
-          error: error?.message || error?.toString() || "Unknown error occurred" 
+        sendResponse({
+          success: false,
+          error: error?.message || error?.toString() || "Unknown error occurred"
         })
       })
     return true // Keep channel open for async
   }
-  
+
   if (request.action === "extractProfileUrls") {
     extractProfileUrls().then((urls) => {
       sendResponse({ success: true, urls })
@@ -100,26 +129,35 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     })
     return true
   }
-  
+
   if (request.action === "startAutomation") {
     startAutomation(request.settings)
     sendResponse({ success: true })
   }
-  
+
   if (request.action === "stopAutomation") {
     stopAutomation()
     sendResponse({ success: true })
   }
-  
+
   if (request.action === "sendTestMessage") {
-    sendTestMessage(request.profile).then((result) => {
+    sendTestMessage(request.profile, request.message).then((result) => {
       sendResponse(result)
     }).catch((error) => {
       sendResponse({ success: false, error: error.message })
     })
     return true // Keep channel open for async
   }
-  
+
+  if (request.action === "generateDraft") {
+    generateDraft(request.profile).then((result) => {
+      sendResponse(result)
+    }).catch((error) => {
+      sendResponse({ success: false, error: error.message })
+    })
+    return true
+  }
+
   if (request.action === "updateApiKey") {
     if (request.apiKey) {
       initializeOpenAI(request.apiKey)
@@ -131,7 +169,7 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     }
     return true
   }
-  
+
   return true
 })
 
@@ -152,7 +190,7 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
     console.log("[Profile Extraction] Step 1: Querying active tab...")
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
     console.log("[Profile Extraction] Tab found:", tab?.id, tab?.url)
-    
+
     if (!tab.id || !tab.url) {
       console.error("[Profile Extraction] ERROR: No active tab found")
       throw new Error("No active tab found")
@@ -167,7 +205,7 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
     const isCandidatePage = tab.url.includes("/cofounder-matching/candidate/")
     const isProfilePage = tab.url.includes("/users/") || tab.url.includes("/profile")
     console.log("[Profile Extraction] Is candidate page:", isCandidatePage, "Is profile page:", isProfilePage)
-    
+
     if (!isCandidatePage && !isProfilePage) {
       console.error("[Profile Extraction] ERROR: Not a profile/candidate page")
       throw new Error("Not a profile/candidate page. Please navigate to a candidate profile page (e.g., /cofounder-matching/candidate/...)")
@@ -178,16 +216,16 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
     try {
       const response = await Promise.race([
         chrome.tabs.sendMessage(tab.id, { action: "extractProfile" }),
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => {
             console.warn("[Profile Extraction] Content script timeout after 8 seconds")
             reject(new Error("Content script timeout"))
           }, 8000)
         )
       ]) as any
-      
+
       console.log("[Profile Extraction] Content script responded:", response)
-      
+
       if (response?.profile) {
         console.log("[Profile Extraction] Profile extracted via content script")
         const profile = deserializeProfile(response.profile)
@@ -211,163 +249,163 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
           console.log("[Profile Extraction] Injected script running...")
           // Direct extraction logic (simplified version)
           try {
-          const waitFor = (fn: () => boolean, timeout = 12000, interval = 400) =>
-            new Promise<boolean>((resolve) => {
-              const start = Date.now()
-              const tick = () => {
-                if (fn()) return resolve(true)
-                if (Date.now() - start > timeout) return resolve(false)
-                setTimeout(tick, interval)
+            const waitFor = (fn: () => boolean, timeout = 12000, interval = 400) =>
+              new Promise<boolean>((resolve) => {
+                const start = Date.now()
+                const tick = () => {
+                  if (fn()) return resolve(true)
+                  if (Date.now() - start > timeout) return resolve(false)
+                  setTimeout(tick, interval)
+                }
+                tick()
+              })
+
+            await waitFor(() => Boolean(document.querySelector("h1") || document.querySelector(".css-y9z691")))
+
+            const nameSelectors = ["h1", ".profile-name", "[data-name]", ".user-name", ".name"]
+            let name = "Unknown"
+            for (const selector of nameSelectors) {
+              const element = document.querySelector(selector)
+              if (element?.textContent?.trim()) {
+                name = element.textContent.trim()
+                break
               }
-              tick()
-            })
-
-          await waitFor(() => Boolean(document.querySelector("h1") || document.querySelector(".css-y9z691")))
-
-          const nameSelectors = ["h1", ".profile-name", "[data-name]", ".user-name", ".name"]
-          let name = "Unknown"
-          for (const selector of nameSelectors) {
-            const element = document.querySelector(selector)
-            if (element?.textContent?.trim()) {
-              name = element.textContent.trim()
-              break
             }
-          }
 
-          if (name === "Unknown") {
+            if (name === "Unknown") {
+              return null
+            }
+
+            const locationSelectors = [
+              ".location",
+              ".country",
+              "[data-country]",
+              ".profile-location",
+              "[title='Location']",
+              ".css-1jvurm9"
+            ]
+            let country: string | undefined
+            for (const selector of locationSelectors) {
+              const element = document.querySelector(selector)
+              if (element?.textContent?.trim()) {
+                country = element.textContent.trim()
+                const parts = country.split(",")
+                if (parts.length > 1) {
+                  country = parts[parts.length - 1].trim()
+                }
+                break
+              }
+            }
+
+            let age: number | undefined
+            const ageEl = document.querySelector('[title="Age"]')
+            if (ageEl?.textContent) {
+              const match = ageEl.textContent.match(/(\d{1,3})/)
+              if (match) age = parseInt(match[1], 10)
+            }
+
+            const bioSelectors = [
+              ".bio",
+              ".description",
+              "[data-bio]",
+              ".profile-bio",
+              ".about",
+              ".about-section",
+              ".profile-about",
+              ".cofounder-card__description",
+              ".profile-description",
+              ".user-description",
+              ".summary",
+              "[data-testid='about']",
+              "[data-testid='bio']",
+              ".css-1tp1ukf",
+              ".css-vqx3x2",
+              ".css-ruq4fr",
+              ".css-106je9h"
+            ]
+            let bio: string | undefined
+            const bioChunks = bioSelectors
+              .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+              .map((el) => el.textContent?.trim() || "")
+              .filter((text) => text.length > 0)
+            if (bioChunks.length > 0) {
+              const combined = Array.from(new Set(bioChunks)).join("\n\n")
+              bio = combined.length > 6000 ? combined.substring(0, 6000) + "..." : combined
+            }
+            if (!bio) {
+              const metaDesc =
+                document.querySelector("meta[name='description']")?.getAttribute("content") ||
+                document.querySelector("meta[property='og:description']")?.getAttribute("content")
+              if (metaDesc?.trim()) {
+                const trimmed = metaDesc.trim()
+                bio = trimmed.length > 4000 ? trimmed.substring(0, 4000) + "..." : trimmed
+              }
+            }
+            if (!bio) {
+              const paragraph = Array.from(document.querySelectorAll("p"))
+                .map((el) => el.textContent?.trim() || "")
+                .filter((t) => t.length >= 60 && t.length <= 5000)
+                .sort((a, b) => b.length - a.length)[0]
+              if (paragraph) {
+                bio = paragraph.length > 4000 ? paragraph.substring(0, 4000) + "..." : paragraph
+              }
+            }
+
+            const interestSelectors = [
+              ".interest",
+              ".tag",
+              ".badge",
+              ".skill",
+              ".topics li",
+              ".skills li",
+              ".interests li",
+              ".tags li",
+              ".css-1iujaz8",
+              ".css-17813s4"
+            ]
+            const interests: string[] = []
+            for (const selector of interestSelectors) {
+              const elements = document.querySelectorAll(selector)
+              if (elements.length > 0) {
+                Array.from(elements).slice(0, 10).forEach((el) => {
+                  const text = el.textContent?.trim()
+                  if (text && text.length < 50) {
+                    interests.push(text)
+                  }
+                })
+                break
+              }
+            }
+
+            const profileUrl = window.location.href
+            // Extract ID from URL - handle both /candidate/ID and /users/ID formats
+            let profileId = profileUrl.split("/").filter(Boolean).pop() || `profile-${Date.now()}`
+            // If it's a candidate URL, get the candidate ID
+            if (profileUrl.includes("/cofounder-matching/candidate/")) {
+              const match = profileUrl.match(/\/candidate\/([^\/\?]+)/)
+              if (match && match[1]) {
+                profileId = match[1]
+              }
+            }
+
+            return {
+              id: profileId,
+              name,
+              country,
+              age,
+              bio,
+              interests: interests.slice(0, 10),
+              profileUrl,
+              collectedAt: new Date().toISOString(),
+              messageCount: 0
+            }
+          } catch (error) {
+            console.error("[Profile Extraction] Error in injected script:", error)
             return null
           }
-
-          const locationSelectors = [
-            ".location",
-            ".country",
-            "[data-country]",
-            ".profile-location",
-            "[title='Location']",
-            ".css-1jvurm9"
-          ]
-          let country: string | undefined
-          for (const selector of locationSelectors) {
-            const element = document.querySelector(selector)
-            if (element?.textContent?.trim()) {
-              country = element.textContent.trim()
-              const parts = country.split(",")
-              if (parts.length > 1) {
-                country = parts[parts.length - 1].trim()
-              }
-              break
-            }
-          }
-
-          let age: number | undefined
-          const ageEl = document.querySelector('[title="Age"]')
-          if (ageEl?.textContent) {
-            const match = ageEl.textContent.match(/(\d{1,3})/)
-            if (match) age = parseInt(match[1], 10)
-          }
-
-          const bioSelectors = [
-            ".bio",
-            ".description",
-            "[data-bio]",
-            ".profile-bio",
-            ".about",
-            ".about-section",
-            ".profile-about",
-            ".cofounder-card__description",
-            ".profile-description",
-            ".user-description",
-            ".summary",
-            "[data-testid='about']",
-            "[data-testid='bio']",
-            ".css-1tp1ukf",
-            ".css-vqx3x2",
-            ".css-ruq4fr",
-            ".css-106je9h"
-          ]
-          let bio: string | undefined
-          const bioChunks = bioSelectors
-            .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
-            .map((el) => el.textContent?.trim() || "")
-            .filter((text) => text.length > 0)
-          if (bioChunks.length > 0) {
-            const combined = Array.from(new Set(bioChunks)).join("\n\n")
-            bio = combined.length > 6000 ? combined.substring(0, 6000) + "..." : combined
-          }
-          if (!bio) {
-            const metaDesc =
-              document.querySelector("meta[name='description']")?.getAttribute("content") ||
-              document.querySelector("meta[property='og:description']")?.getAttribute("content")
-            if (metaDesc?.trim()) {
-              const trimmed = metaDesc.trim()
-              bio = trimmed.length > 4000 ? trimmed.substring(0, 4000) + "..." : trimmed
-            }
-          }
-          if (!bio) {
-            const paragraph = Array.from(document.querySelectorAll("p"))
-              .map((el) => el.textContent?.trim() || "")
-              .filter((t) => t.length >= 60 && t.length <= 5000)
-              .sort((a, b) => b.length - a.length)[0]
-            if (paragraph) {
-              bio = paragraph.length > 4000 ? paragraph.substring(0, 4000) + "..." : paragraph
-            }
-          }
-
-          const interestSelectors = [
-            ".interest",
-            ".tag",
-            ".badge",
-            ".skill",
-            ".topics li",
-            ".skills li",
-            ".interests li",
-            ".tags li",
-            ".css-1iujaz8",
-            ".css-17813s4"
-          ]
-          const interests: string[] = []
-          for (const selector of interestSelectors) {
-            const elements = document.querySelectorAll(selector)
-            if (elements.length > 0) {
-              Array.from(elements).slice(0, 10).forEach((el) => {
-                const text = el.textContent?.trim()
-                if (text && text.length < 50) {
-                  interests.push(text)
-                }
-              })
-              break
-            }
-          }
-
-          const profileUrl = window.location.href
-          // Extract ID from URL - handle both /candidate/ID and /users/ID formats
-          let profileId = profileUrl.split("/").filter(Boolean).pop() || `profile-${Date.now()}`
-          // If it's a candidate URL, get the candidate ID
-          if (profileUrl.includes("/cofounder-matching/candidate/")) {
-            const match = profileUrl.match(/\/candidate\/([^\/\?]+)/)
-            if (match && match[1]) {
-              profileId = match[1]
-            }
-          }
-
-          return {
-            id: profileId,
-            name,
-            country,
-            age,
-            bio,
-            interests: interests.slice(0, 10),
-            profileUrl,
-            collectedAt: new Date().toISOString(),
-            messageCount: 0
-          }
-        } catch (error) {
-          console.error("[Profile Extraction] Error in injected script:", error)
-          return null
         }
-      }
-    })
-    console.log("[Profile Extraction] Script injection completed")
+      })
+      console.log("[Profile Extraction] Script injection completed")
     } catch (injectionError) {
       console.error("[Profile Extraction] ERROR: Script injection failed:", injectionError)
       throw new Error(`Failed to inject script: ${injectionError instanceof Error ? injectionError.message : "Unknown error"}`)
@@ -397,7 +435,7 @@ async function extractCurrentProfile(): Promise<CustomerProfile | null> {
 async function extractProfileUrls(): Promise<string[]> {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-    
+
     if (!tab.id || !tab.url) {
       throw new Error("No active tab found")
     }
@@ -420,7 +458,7 @@ async function extractProfileUrls(): Promise<string[]> {
         ]
 
         const links = new Set<string>()
-        
+
         for (const selector of linkSelectors) {
           const elements = document.querySelectorAll<HTMLAnchorElement>(selector)
           elements.forEach((el) => {
@@ -453,18 +491,18 @@ async function extractProfileUrls(): Promise<string[]> {
 
 async function startAutomation(settings: AutomationSettings) {
   stopAutomation() // Stop any existing automation
-  
+
   if (!settings.enabled) {
     return
   }
-  
+
   messageDeliveryService = new MessageDeliveryService(settings)
-  
+
   // Run automation loop
   automationInterval = setInterval(async () => {
     await runAutomationCycle(settings)
   }, settings.rateLimit.delayBetweenMessages || 60000)
-  
+
   // Run immediately
   await runAutomationCycle(settings)
 }
@@ -480,26 +518,26 @@ async function runAutomationCycle(settings: AutomationSettings) {
   try {
     const profiles = await getProfiles()
     const filtered = filterProfiles(profiles, await getFilterSettings())
-    
+
     // Find profiles that haven't been messaged or haven't been messaged recently
     const eligibleProfiles = filtered.filter((profile) => {
       if (profile.messageCount === 0) return true
       if (!profile.lastMessageSent) return true
-      
+
       // Don't message same person more than once per week
       const daysSinceLastMessage =
         (Date.now() - new Date(profile.lastMessageSent).getTime()) / (1000 * 60 * 60 * 24)
       return daysSinceLastMessage >= 7
     })
-    
+
     if (eligibleProfiles.length === 0) {
       console.log("No eligible profiles found")
       return
     }
-    
+
     // Pick a random profile
     const profile = eligibleProfiles[Math.floor(Math.random() * eligibleProfiles.length)]
-    
+
     if (messageDeliveryService) {
       const result = await messageDeliveryService.sendMessage(profile)
       if (result.success) {

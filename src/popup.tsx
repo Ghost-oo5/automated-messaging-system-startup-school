@@ -54,7 +54,9 @@ function IndexPopup() {
   const [isCollecting, setIsCollecting] = useState(false)
   const [collectionStatus, setCollectionStatus] = useState<{ type: 'ok' | 'err' | 'info', msg: string } | null>(null)
   const [isSending, setIsSending] = useState(false)
-  const [sendStatus, setSendStatus] = useState<{ type: 'ok' | 'err', msg: string } | null>(null)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [draftMessage, setDraftMessage] = useState<string | null>(null)
+  const [sendStatus, setSendStatus] = useState<{ type: 'ok' | 'err' | 'info', msg: string } | null>(null)
   const [messageHistory, setMessageHistory] = useState<MessageHistory[]>([])
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
   const [modalProfile, setModalProfile] = useState<CustomerProfile | null>(null)
@@ -197,7 +199,36 @@ function IndexPopup() {
     }
   }
 
-  async function handleSendTestMessage(profile?: CustomerProfile) {
+  async function handleGenerateDraft(profile: CustomerProfile) {
+    if (!automationSettings?.openaiApiKey) {
+      setSendStatus({ type: 'err', msg: "Set OpenAI API key first" })
+      return
+    }
+    setModalProfile(profile)
+    setIsModalOpen(true)
+    setIsGenerating(true)
+    setDraftMessage(null)
+    setSendStatus({ type: 'info', msg: "Generating draft..." })
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: "generateDraft",
+        profile: serializeProfile(profile)
+      })
+      if (response.success) {
+        setDraftMessage(response.message)
+        setSendStatus(null)
+      } else {
+        setSendStatus({ type: 'err', msg: response.error || "Failed to generate draft" })
+      }
+    } catch (error) {
+      setSendStatus({ type: 'err', msg: "Connection error" })
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  async function handleSendTestMessage(profile?: CustomerProfile, overrideMessage?: string) {
     if (!automationSettings?.openaiApiKey) {
       setSendStatus({ type: 'err', msg: "Set OpenAI API key first" })
       return
@@ -208,16 +239,20 @@ function IndexPopup() {
       return
     }
     setIsSending(true)
-    setSendStatus({ type: 'info', msg: "Generating message..." } as any)
+    setSendStatus({ type: 'info', msg: overrideMessage ? "Sending..." : "Generating & Sending..." })
     try {
       const response = await chrome.runtime.sendMessage({
         action: "sendTestMessage",
-        profile: serializeProfile(targetProfile)
+        profile: serializeProfile(targetProfile),
+        message: overrideMessage
       })
       if (response.success) {
         setSendStatus({ type: 'ok', msg: `Sent to ${targetProfile.name}` })
         await loadData()
         if (messageDelivery) setStats(messageDelivery.getStats())
+        if (isModalOpen) {
+          setTimeout(() => setIsModalOpen(false), 1500)
+        }
       } else {
         setSendStatus({ type: 'err', msg: response.error || "Failed to send" })
       }
@@ -225,7 +260,9 @@ function IndexPopup() {
       setSendStatus({ type: 'err', msg: "Network error" })
     } finally {
       setIsSending(false)
-      setTimeout(() => setSendStatus(null), 5000)
+      if (!isModalOpen) {
+        setTimeout(() => setSendStatus(null), 5000)
+      }
     }
   }
 
@@ -286,8 +323,8 @@ function IndexPopup() {
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all capitalize ${activeTab === tab
-                ? "bg-slate-100 text-indigo-600 shadow-inner"
-                : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+              ? "bg-slate-100 text-indigo-600 shadow-inner"
+              : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
               }`}>
             {tab}
           </button>
@@ -306,10 +343,17 @@ function IndexPopup() {
               isCollecting={isCollecting}
               collectionStatus={collectionStatus}
               isSending={isSending}
+              isGenerating={isGenerating}
               sendStatus={sendStatus}
               onCollectCurrentProfile={handleCollectCurrentProfile}
               onExtractProfileUrls={handleExtractProfileUrls}
-              onSendTestMessage={() => handleSendTestMessage()}
+              onSendTestMessage={() => {
+                if (filteredProfiles[0]) {
+                  handleGenerateDraft(filteredProfiles[0])
+                } else {
+                  setSendStatus({ type: 'err', msg: "No profiles available" })
+                }
+              }}
             />
           )}
 
@@ -336,11 +380,13 @@ function IndexPopup() {
             <ProfilesTab
               profiles={filteredProfiles}
               isSending={isSending}
+              isGenerating={isGenerating}
               sendStatus={sendStatus}
-              onSendMessage={handleSendTestMessage}
+              onSendMessage={handleGenerateDraft}
               onSelectProfile={(profile) => {
                 setModalProfile(profile)
                 setIsModalOpen(true)
+                setDraftMessage(null)
               }}
               onViewMessages={(profileId) => {
                 setSelectedProfileId(profileId)
@@ -422,18 +468,63 @@ function IndexPopup() {
                     </div>
                   </div>
                 )}
+
+                {/* Draft Message Editor */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex justify-between items-center">
+                    <p className="text-[10px] uppercase font-black text-slate-400">Personalized Message</p>
+                    {isGenerating && (
+                      <span className="flex items-center gap-1.5 text-[10px] text-indigo-600 font-bold animate-pulse">
+                        <div className="w-1.5 h-1.5 bg-indigo-600 rounded-full" />
+                        AI is writing...
+                      </span>
+                    )}
+                  </div>
+
+                  {draftMessage !== null ? (
+                    <textarea
+                      value={draftMessage}
+                      onChange={(e) => setDraftMessage(e.target.value)}
+                      className="w-full h-40 p-4 bg-white border-2 border-indigo-100 rounded-xl text-sm text-slate-700 leading-relaxed focus:border-indigo-500 focus:ring-0 transition-all scrollbar-hide resize-none shadow-inner"
+                      placeholder="Write your message here..."
+                    />
+                  ) : !isGenerating && (
+                    <div className="h-40 flex flex-col items-center justify-center bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl p-6 text-center">
+                      <p className="text-xs text-slate-400 font-medium mb-3">No draft generated yet.</p>
+                      <button
+                        onClick={() => handleGenerateDraft(modalProfile)}
+                        className="text-xs font-black uppercase tracking-widest text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition-all">
+                        Generate with AI
+                      </button>
+                    </div>
+                  )}
+
+                  {isGenerating && (
+                    <div className="h-40 flex items-center justify-center bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl">
+                      <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Modal Footer */}
               <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex gap-3">
-                <button
-                  onClick={() => {
-                    handleSendTestMessage(modalProfile)
-                    setIsModalOpen(false)
-                  }}
-                  className="flex-1 btn-primary py-3">
-                  Quick Message
-                </button>
+                {draftMessage ? (
+                  <button
+                    onClick={() => handleSendTestMessage(modalProfile, draftMessage)}
+                    disabled={isSending}
+                    className="flex-1 btn-primary py-3 flex items-center justify-center gap-2">
+                    {isSending && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                    Confirm & Send
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleGenerateDraft(modalProfile)}
+                    disabled={isGenerating}
+                    className="flex-1 btn-primary py-3">
+                    Generate Draft
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setSelectedProfileId(modalProfile.id)
@@ -460,6 +551,7 @@ function DashboardTab({
   isCollecting,
   collectionStatus,
   isSending,
+  isGenerating,
   sendStatus,
   onCollectCurrentProfile,
   onExtractProfileUrls,
@@ -472,6 +564,7 @@ function DashboardTab({
   isCollecting: boolean
   collectionStatus: any
   isSending: boolean
+  isGenerating: boolean
   sendStatus: any
   onCollectCurrentProfile: () => void
   onExtractProfileUrls: () => void
@@ -489,8 +582,8 @@ function DashboardTab({
         ].map((item) => (
           <div key={item.label} className="card p-4 flex flex-col justify-between h-28 relative group hover:border-indigo-200 transition-colors">
             <div className={`p-1.5 rounded-lg w-fit mb-2 ${item.color === 'indigo' ? 'bg-indigo-50 text-indigo-600' :
-                item.color === 'emerald' ? 'bg-emerald-50 text-emerald-600' :
-                  item.color === 'blue' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'
+              item.color === 'emerald' ? 'bg-emerald-50 text-emerald-600' :
+                item.color === 'blue' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'
               }`}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">{item.icon}</svg>
             </div>
@@ -512,8 +605,8 @@ function DashboardTab({
 
         {collectionStatus && (
           <div className={`p-3 rounded-xl text-xs font-bold animate-in zoom-in-95 ${collectionStatus.type === 'ok' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" :
-              collectionStatus.type === 'err' ? "bg-rose-50 text-rose-700 border border-rose-100" :
-                "bg-blue-50 text-blue-700 border border-blue-100"
+            collectionStatus.type === 'err' ? "bg-rose-50 text-rose-700 border border-rose-100" :
+              "bg-blue-50 text-blue-700 border border-blue-100"
             }`}>
             {collectionStatus.msg}
           </div>
@@ -557,9 +650,9 @@ function DashboardTab({
 
         <button
           onClick={onSendTestMessage}
-          disabled={isSending || filteredProfiles.length === 0 || !automationSettings.openaiApiKey}
+          disabled={isSending || isGenerating || filteredProfiles.length === 0 || !automationSettings.openaiApiKey}
           className="w-full btn-primary bg-slate-800 hover:bg-slate-900 border-none py-3 shadow-lg shadow-slate-200">
-          {isSending ? "Processing..." : "Trigger Selective Automation"}
+          {isSending || isGenerating ? "Processing..." : "Trigger Selective Automation"}
         </button>
       </div>
     </div>
@@ -569,6 +662,7 @@ function DashboardTab({
 function ProfilesTab({
   profiles,
   isSending,
+  isGenerating,
   sendStatus,
   onSendMessage,
   onSelectProfile,
@@ -578,6 +672,7 @@ function ProfilesTab({
 }: {
   profiles: CustomerProfile[]
   isSending: boolean
+  isGenerating: boolean
   sendStatus: any
   onSendMessage: (profile: CustomerProfile) => void
   onSelectProfile: (profile: CustomerProfile) => void
@@ -698,9 +793,9 @@ function ProfilesTab({
                 </button>
                 <button
                   onClick={() => onSendMessage(profile)}
-                  disabled={isSending}
+                  disabled={isSending || isGenerating}
                   className="btn-primary py-2 px-4 shadow-indigo-100 flex items-center gap-2">
-                  {isSending ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Send'}
+                  {isGenerating ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Draft'}
                 </button>
               </div>
             </div>
