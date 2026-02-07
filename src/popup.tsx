@@ -14,7 +14,6 @@ import {
   saveFilterSettings,
   getProfiles,
   getMessageHistory,
-  getMessagesForProfile,
   clearAllData
 } from "~/utils/storage"
 import { initializeOpenAI } from "~/services/openai"
@@ -24,19 +23,17 @@ import { COUNTRIES, AGE_GROUPS, INTERESTS, OPENAI_MODELS } from "~/utils/constan
 import { serializeProfile } from "~/utils/serialization"
 import { createPortal } from "react-dom"
 
-type Tab = "dashboard" | "settings" | "profiles" | "messages"
+type Tab = "dashboard" | "profiles" | "messages" | "settings"
 
 function formatDateTime(value: Date | string | number | null | undefined) {
   const d = value instanceof Date ? value : value ? new Date(value) : null
-  if (!d || Number.isNaN(d.getTime())) return "Not recorded"
+  if (!d || Number.isNaN(d.getTime())) return "Never"
 
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
-    year: "numeric",
     hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
+    minute: "2-digit"
   }).format(d)
 }
 
@@ -55,9 +52,9 @@ function IndexPopup() {
   const [isResetting, setIsResetting] = useState(false)
   const [resetStatus, setResetStatus] = useState<string | null>(null)
   const [isCollecting, setIsCollecting] = useState(false)
-  const [collectionStatus, setCollectionStatus] = useState<string | null>(null)
+  const [collectionStatus, setCollectionStatus] = useState<{ type: 'ok' | 'err' | 'info', msg: string } | null>(null)
   const [isSending, setIsSending] = useState(false)
-  const [sendStatus, setSendStatus] = useState<string | null>(null)
+  const [sendStatus, setSendStatus] = useState<{ type: 'ok' | 'err', msg: string } | null>(null)
   const [messageHistory, setMessageHistory] = useState<MessageHistory[]>([])
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
   const [modalProfile, setModalProfile] = useState<CustomerProfile | null>(null)
@@ -69,7 +66,6 @@ function IndexPopup() {
 
   useEffect(() => {
     if (activeTab === "messages") {
-      // Refresh history when entering Messages to avoid stale or missing data
       getMessageHistory().then(setMessageHistory)
     }
   }, [activeTab])
@@ -110,11 +106,9 @@ function IndexPopup() {
 
   async function handleToggleAutomation() {
     if (!automationSettings) return
-
     const updated = { ...automationSettings, enabled: !automationSettings.enabled }
     setAutomationSettings(updated)
     await saveAutomationSettings(updated)
-
     if (updated.enabled && updated.openaiApiKey) {
       initializeOpenAI(updated.openaiApiKey)
     }
@@ -122,193 +116,121 @@ function IndexPopup() {
 
   async function handleSaveApiKey() {
     if (!automationSettings) return
-
     const trimmedKey = apiKeyInput.trim()
     const trimmedName = senderNameInput.trim()
     const updated = { ...automationSettings, openaiApiKey: trimmedKey, senderName: trimmedName }
     setAutomationSettings(updated)
     await saveAutomationSettings(updated)
-
-    if (trimmedKey) {
-      initializeOpenAI(trimmedKey)
-      setSaveStatus("API key saved")
-    } else {
-      setSaveStatus("API key cleared")
-    }
-    if (trimmedName) {
-      setSaveStatus((prev) => (prev ? `${prev} · Sender saved` : "Sender saved"))
-    }
-    setTimeout(() => setSaveStatus(null), 4000)
+    if (trimmedKey) initializeOpenAI(trimmedKey)
+    setSaveStatus("Settings updated successfully")
+    setTimeout(() => setSaveStatus(null), 3000)
   }
 
   async function handleUpdateRateLimit(field: string, value: number) {
     if (!automationSettings) return
-
     const updated = {
       ...automationSettings,
-      rateLimit: {
-        ...automationSettings.rateLimit,
-        [field]: value
-      }
+      rateLimit: { ...automationSettings.rateLimit, [field]: value }
     }
     setAutomationSettings(updated)
     await saveAutomationSettings(updated)
-    if (messageDelivery) {
-      messageDelivery.updateSettings(updated)
-    }
+    if (messageDelivery) messageDelivery.updateSettings(updated)
   }
 
   async function handleModelChange(model: string) {
     if (!automationSettings) return
-
     const updated = { ...automationSettings, openaiModel: model }
     setAutomationSettings(updated)
     await saveAutomationSettings(updated)
-    if (messageDelivery) {
-      messageDelivery.updateSettings(updated)
-    }
+    if (messageDelivery) messageDelivery.updateSettings(updated)
   }
 
   async function handleResetExtension() {
+    if (!confirm("Are you sure you want to reset all data? This cannot be undone.")) return
     setIsResetting(true)
-    setResetStatus("Resetting data...")
     try {
       await clearAllData()
       await loadData()
-      setResetStatus("[OK] Extension data reset")
+      setResetStatus("Extension data reset complete")
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Unknown error"
-      setResetStatus(`[WARN] Reset failed: ${msg}`)
+      setResetStatus("Error resetting data")
     } finally {
-      setTimeout(() => setResetStatus(null), 5000)
+      setTimeout(() => setResetStatus(null), 3000)
       setIsResetting(false)
     }
   }
 
   async function handleCollectCurrentProfile() {
     setIsCollecting(true)
-    setCollectionStatus("Collecting profile from current tab...")
-    console.log("[Popup] Starting profile collection...")
-
+    setCollectionStatus({ type: 'info', msg: "Extracting profile..." })
     try {
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Request timeout after 45 seconds")), 45000)
-      )
-
-      const responsePromise = chrome.runtime.sendMessage({ action: "extractCurrentProfile" })
-
-      const response = await Promise.race([responsePromise, timeoutPromise]) as any
-
-      console.log("[Popup] Received response:", response)
-
+      const response = await chrome.runtime.sendMessage({ action: "extractCurrentProfile" })
       if (response && response.success && response.profile) {
-        setCollectionStatus(`[OK] Profile collected: ${response.profile.name}`)
-        await loadData() // Reload profiles
-        setTimeout(() => setCollectionStatus(null), 3000)
+        setCollectionStatus({ type: 'ok', msg: `Collected: ${response.profile.name}` })
+        await loadData()
       } else {
-        const errorMsg = response?.error || "Failed to collect profile"
-        console.error("[Popup] Collection failed:", errorMsg)
-        setCollectionStatus(`[ERR] ${errorMsg}`)
-        setTimeout(() => setCollectionStatus(null), 5000)
+        setCollectionStatus({ type: 'err', msg: response?.error || "Failed to collect profile" })
       }
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : "Unknown error"
-      console.error("[Popup] Collection error:", error)
-      setCollectionStatus(`[ERR] Error: ${errorMsg}`)
-      setTimeout(() => setCollectionStatus(null), 5000)
+      setCollectionStatus({ type: 'err', msg: "Connection error" })
     } finally {
       setIsCollecting(false)
-      console.log("[Popup] Collection process finished")
+      setTimeout(() => setCollectionStatus(null), 4000)
     }
   }
 
   async function handleExtractProfileUrls() {
     setIsCollecting(true)
-    setCollectionStatus("Extracting profile URLs from current page...")
-
+    setCollectionStatus({ type: 'info', msg: "Searching for profiles..." })
     try {
       const response = await chrome.runtime.sendMessage({ action: "extractProfileUrls" })
-
       if (response.success && response.urls) {
-        const count = response.urls.length
-        setCollectionStatus(`[OK] Found ${count} profile URL${count !== 1 ? "s" : ""}`)
-        // TODO: Optionally collect all these profiles
-        setTimeout(() => setCollectionStatus(null), 3000)
+        setCollectionStatus({ type: 'ok', msg: `Found ${response.urls.length} profile links` })
       } else {
-        setCollectionStatus(`[ERR] ${response.error || "No profile URLs found"}`)
-        setTimeout(() => setCollectionStatus(null), 5000)
+        setCollectionStatus({ type: 'err', msg: "No profiles found" })
       }
     } catch (error) {
-      setCollectionStatus(`[ERR] Error: ${error instanceof Error ? error.message : "Unknown error"}`)
-      setTimeout(() => setCollectionStatus(null), 5000)
+      setCollectionStatus({ type: 'err', msg: "Error searching" })
     } finally {
       setIsCollecting(false)
+      setTimeout(() => setCollectionStatus(null), 4000)
     }
   }
 
   async function handleSendTestMessage(profile?: CustomerProfile) {
-    if (!automationSettings || !messageDelivery) {
-      setSendStatus("[ERR] Automation settings not loaded")
-      setTimeout(() => setSendStatus(null), 3000)
+    if (!automationSettings?.openaiApiKey) {
+      setSendStatus({ type: 'err', msg: "Set OpenAI API key first" })
       return
     }
-
-    if (!automationSettings.openaiApiKey) {
-      setSendStatus("[ERR] Please set OpenAI API key in Settings tab")
-      setTimeout(() => setSendStatus(null), 5000)
+    const targetProfile = profile || filteredProfiles[0]
+    if (!targetProfile) {
+      setSendStatus({ type: 'err', msg: "No profile selected" })
       return
     }
-
     setIsSending(true)
-    setSendStatus("Generating message...")
-
+    setSendStatus({ type: 'info', msg: "Generating message..." } as any)
     try {
-      // Use provided profile or get first filtered profile
-      const targetProfile = profile || filteredProfiles[0]
-
-      if (!targetProfile) {
-        setSendStatus("[ERR] No profiles available to message")
-        setTimeout(() => setSendStatus(null), 3000)
-        return
-      }
-
-      // Serialize profile for message passing
-      const serializedProfile = serializeProfile(targetProfile)
-
       const response = await chrome.runtime.sendMessage({
         action: "sendTestMessage",
-        profile: serializedProfile
+        profile: serializeProfile(targetProfile)
       })
-
       if (response.success) {
-        setSendStatus(`[OK] Message sent to ${targetProfile.name}`)
-        // Reload data to update stats, profiles, and history
+        setSendStatus({ type: 'ok', msg: `Sent to ${targetProfile.name}` })
         await loadData()
-        // Refresh stats
-        if (messageDelivery) {
-          setStats(messageDelivery.getStats())
-        }
-        // Show the sent message
-        if (response.message) {
-          setSendStatus(`[OK] Message sent to ${targetProfile.name}: "${response.message.substring(0, 50)}..."`)
-        }
-        setTimeout(() => setSendStatus(null), 8000)
+        if (messageDelivery) setStats(messageDelivery.getStats())
       } else {
-        setSendStatus(`[ERR] ${response.error || "Failed to send message"}`)
-        setTimeout(() => setSendStatus(null), 5000)
+        setSendStatus({ type: 'err', msg: response.error || "Failed to send" })
       }
     } catch (error) {
-      setSendStatus(`[ERR] Error: ${error instanceof Error ? error.message : "Unknown error"}`)
-      setTimeout(() => setSendStatus(null), 5000)
+      setSendStatus({ type: 'err', msg: "Network error" })
     } finally {
       setIsSending(false)
+      setTimeout(() => setSendStatus(null), 5000)
     }
   }
 
   async function handleFilterChange(field: keyof FilterSettings, value: any) {
     if (!filterSettings) return
-
     const updated = { ...filterSettings, [field]: value }
     setFilterSettings(updated)
     await saveFilterSettings(updated)
@@ -316,52 +238,66 @@ function IndexPopup() {
 
   if (!automationSettings || !filterSettings) {
     return (
-      <div className="w-[600px] h-[700px] flex items-center justify-center">
-        <div className="text-gray-500">Loading...</div>
+      <div className="w-[600px] h-[700px] flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-slate-500 font-medium">Initializing...</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="w-[600px] bg-gradient-to-br from-slate-50 to-slate-100 h-[700px] flex flex-col">
+    <div className="w-[600px] h-[700px] flex flex-col bg-slate-50 text-slate-900 shadow-2xl overflow-hidden font-sans">
       {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 shadow-lg">
-        <div className="flex items-center justify-between mb-2">
-          <h1 className="text-xl font-bold">YCStartupSchool Messenger</h1>
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-20">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-indigo-200">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+          </div>
+          <div>
+            <h1 className="text-lg font-bold tracking-tight text-slate-800">Messenger</h1>
+            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest leading-none">Automation Suite</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex flex-col items-end">
+            <span className={`text-[10px] uppercase font-black ${automationSettings.enabled ? 'text-emerald-500' : 'text-slate-300'}`}>
+              {automationSettings.enabled ? 'System Live' : 'Paused'}
+            </span>
+          </div>
           <button
             onClick={handleToggleAutomation}
-            className={`w-12 h-6 rounded-full transition-all duration-300 ${automationSettings.enabled ? "bg-green-400" : "bg-gray-300"
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ring-offset-2 focus:ring-2 focus:ring-indigo-500 ${automationSettings.enabled ? "bg-indigo-600" : "bg-slate-300"
               }`}>
             <span
-              className={`block w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${automationSettings.enabled ? "translate-x-6" : "translate-x-1"
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${automationSettings.enabled ? "translate-x-6" : "translate-x-1"
                 }`}
             />
           </button>
         </div>
-        <p className="text-blue-100 text-xs">
-          {automationSettings.enabled ? "System Active" : "System Inactive"}
-        </p>
-      </div>
+      </header>
 
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 bg-white overflow-x-auto scrollbar-hide flex-shrink-0">
+      {/* Tabs / Navigation */}
+      <nav className="bg-white px-6 py-2 border-b border-slate-200 overflow-x-auto scrollbar-hide flex gap-1 z-10">
         {(["dashboard", "profiles", "messages", "settings"] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-shrink-0 px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === tab
-              ? "text-blue-600 border-b-2 border-blue-600"
-              : "text-gray-600 hover:text-gray-900"
+            className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all capitalize ${activeTab === tab
+                ? "bg-slate-100 text-indigo-600 shadow-inner"
+                : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
               }`}>
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab}
           </button>
         ))}
-      </div>
+      </nav>
 
-      {/* Content */}
-      <div className="flex-1 overflow-hidden bg-gray-50 relative">
-        {activeTab === "dashboard" && (
-          <div className="h-full overflow-y-auto p-4">
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-hidden relative">
+        <div className="h-full overflow-y-auto p-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          {activeTab === "dashboard" && (
             <DashboardTab
               stats={stats}
               automationSettings={automationSettings}
@@ -373,13 +309,11 @@ function IndexPopup() {
               sendStatus={sendStatus}
               onCollectCurrentProfile={handleCollectCurrentProfile}
               onExtractProfileUrls={handleExtractProfileUrls}
-              onSendTestMessage={handleSendTestMessage}
+              onSendTestMessage={() => handleSendTestMessage()}
             />
-          </div>
-        )}
+          )}
 
-        {activeTab === "settings" && (
-          <div className="h-full overflow-y-auto p-4">
+          {activeTab === "settings" && (
             <SettingsTab
               automationSettings={automationSettings}
               apiKeyInput={apiKeyInput}
@@ -396,11 +330,9 @@ function IndexPopup() {
               onRateLimitChange={handleUpdateRateLimit}
               onModelChange={handleModelChange}
             />
-          </div>
-        )}
+          )}
 
-        {activeTab === "profiles" && (
-          <div className="h-full w-full p-4 overflow-hidden">
+          {activeTab === "profiles" && (
             <ProfilesTab
               profiles={filteredProfiles}
               isSending={isSending}
@@ -417,88 +349,90 @@ function IndexPopup() {
               filterSettings={filterSettings}
               onFilterChange={handleFilterChange}
             />
-          </div>
-        )}
+          )}
 
-        {activeTab === "messages" && (
-          <div className="h-full overflow-y-auto p-4">
+          {activeTab === "messages" && (
             <MessagesTab
               messageHistory={messageHistory}
               selectedProfileId={selectedProfileId}
               onProfileSelect={setSelectedProfileId}
               profiles={profiles}
             />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </main>
+
+      {/* Modal / Portal */}
       {isModalOpen && modalProfile &&
         createPortal(
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/60" onClick={() => setIsModalOpen(false)} />
-            <div className="relative z-10 w-[90%] max-w-2xl max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-xl p-5 space-y-4">
-              <div className="flex justify-between items-start">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 animate-in fade-in duration-200">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsModalOpen(false)} />
+            <div className="relative z-10 w-full max-w-lg bg-white rounded-2xl shadow-2xl shadow-slate-900/20 max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+              {/* Modal Header */}
+              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">{modalProfile.name}</h3>
-                  <p className="text-sm text-gray-600">
-                    {modalProfile.country || "Location not set"} • {modalProfile.ageGroup || "Age not set"}
+                  <h3 className="text-xl font-bold text-slate-800">{modalProfile.name}</h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {modalProfile.country || "Unknown Location"} {modalProfile.age ? `• ${modalProfile.age} yrs` : ''}
                   </p>
-                  {modalProfile.profileUrl && (
-                    <a
-                      href={modalProfile.profileUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 text-sm underline">
-                      View profile
-                    </a>
-                  )}
                 </div>
-                <button
-                  className="text-gray-500 hover:text-gray-800 text-xl leading-none"
-                  onClick={() => setIsModalOpen(false)}>
-                  ×
+                <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                  <svg className="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
 
-              <div className="text-sm text-gray-700 space-y-2">
-                <p><span className="font-semibold">Last Messaged:</span> {modalProfile.lastMessageSent ? formatDateTime(modalProfile.lastMessageSent) : "Never"}</p>
-                <p><span className="font-semibold">Message Count:</span> {modalProfile.messageCount ?? 0}</p>
-                {modalProfile.age && (
-                  <p><span className="font-semibold">Age:</span> {modalProfile.age}</p>
+              {/* Modal Content */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {modalProfile.profileUrl && (
+                  <a href={modalProfile.profileUrl} target="_blank" className="inline-flex items-center gap-1.5 text-xs text-indigo-600 font-bold hover:underline">
+                    View Startup School Profile
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                  </a>
+                )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                    <p className="text-[10px] uppercase font-black text-slate-400 mb-1">Last Messaged</p>
+                    <p className="text-sm font-semibold text-slate-700">{formatDateTime(modalProfile.lastMessageSent)}</p>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                    <p className="text-[10px] uppercase font-black text-slate-400 mb-1">Total Messages</p>
+                    <p className="text-sm font-semibold text-slate-700">{modalProfile.messageCount ?? 0}</p>
+                  </div>
+                </div>
+
+                {modalProfile.interests && modalProfile.interests.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] uppercase font-black text-slate-400">Interests</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {modalProfile.interests.map((interest, idx) => (
+                        <span key={idx} className="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-[11px] font-bold rounded-full border border-indigo-100">
+                          {interest}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {modalProfile.bio && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] uppercase font-black text-slate-400">Bio / About</p>
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-sm text-slate-600 leading-relaxed max-h-48 overflow-y-auto italic">
+                      {modalProfile.bio}
+                    </div>
+                  </div>
                 )}
               </div>
 
-              {modalProfile.interests && modalProfile.interests.length > 0 && (
-                <div className="space-y-1">
-                  <p className="font-semibold text-sm text-gray-800">Interests</p>
-                  <div className="flex flex-wrap gap-1">
-                    {modalProfile.interests.map((interest, idx) => (
-                      <span
-                        key={idx}
-                        className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
-                        {interest}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {modalProfile.bio && (
-                <div className="space-y-1">
-                  <p className="font-semibold text-sm text-gray-800">Description</p>
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap max-h-60 overflow-y-auto">
-                    {modalProfile.bio}
-                  </p>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2">
+              {/* Modal Footer */}
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex gap-3">
                 <button
                   onClick={() => {
                     handleSendTestMessage(modalProfile)
                     setIsModalOpen(false)
                   }}
-                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm font-medium">
-                  Send Message
+                  className="flex-1 btn-primary py-3">
+                  Quick Message
                 </button>
                 <button
                   onClick={() => {
@@ -506,8 +440,8 @@ function IndexPopup() {
                     setActiveTab("messages")
                     setIsModalOpen(false)
                   }}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 text-sm font-medium">
-                  View History
+                  className="px-6 btn-secondary py-3">
+                  History
                 </button>
               </div>
             </div>
@@ -536,144 +470,330 @@ function DashboardTab({
   filteredProfiles: CustomerProfile[]
   totalProfiles: number
   isCollecting: boolean
-  collectionStatus: string | null
+  collectionStatus: any
   isSending: boolean
-  sendStatus: string | null
+  sendStatus: any
   onCollectCurrentProfile: () => void
   onExtractProfileUrls: () => void
   onSendTestMessage: () => void
 }) {
   return (
-    <div className="space-y-4">
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <p className="text-xs text-gray-500 mb-1">Total Sent</p>
-          <p className="text-2xl font-bold text-gray-800">
-            {stats?.totalSent || 0}
-          </p>
-        </div>
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <p className="text-xs text-gray-500 mb-1">Today</p>
-          <p className="text-2xl font-bold text-gray-800">
-            {stats?.messagesToday || 0}
-          </p>
-        </div>
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <p className="text-xs text-gray-500 mb-1">This Hour</p>
-          <p className="text-2xl font-bold text-gray-800">
-            {stats?.messagesThisHour || 0}
-          </p>
-        </div>
-        <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-          <p className="text-xs text-gray-500 mb-1">Failed</p>
-          <p className="text-2xl font-bold text-red-600">
-            {stats?.totalFailed || 0}
-          </p>
-        </div>
+    <div className="space-y-6">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 gap-4">
+        {[
+          { label: 'Total Messages', value: stats?.totalSent || 0, color: 'indigo', icon: <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /> },
+          { label: 'Sent Today', value: stats?.messagesToday || 0, color: 'emerald', icon: <path d="M13 10V3L4 14h7v7l9-11h-7z" /> },
+          { label: 'Sent This Hour', value: stats?.messagesThisHour || 0, color: 'blue', icon: <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /> },
+          { label: 'Failures', value: stats?.totalFailed || 0, color: 'rose', icon: <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /> },
+        ].map((item) => (
+          <div key={item.label} className="card p-4 flex flex-col justify-between h-28 relative group hover:border-indigo-200 transition-colors">
+            <div className={`p-1.5 rounded-lg w-fit mb-2 ${item.color === 'indigo' ? 'bg-indigo-50 text-indigo-600' :
+                item.color === 'emerald' ? 'bg-emerald-50 text-emerald-600' :
+                  item.color === 'blue' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'
+              }`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">{item.icon}</svg>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase font-black text-slate-400 tracking-wider font-sans">{item.label}</p>
+              <p className="text-2xl font-black text-slate-800">{item.value}</p>
+            </div>
+            <div className={`absolute top-0 right-0 w-1 h-full bg-${item.color}-500/10`} />
+          </div>
+        ))}
       </div>
 
-      {/* Rate Limits */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">Rate Limits</h3>
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-gray-600">Per Hour:</span>
-            <span className="font-medium">
-              {automationSettings.rateLimit.messagesPerHour}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Per Day:</span>
-            <span className="font-medium">
-              {automationSettings.rateLimit.messagesPerDay}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Delay:</span>
-            <span className="font-medium">
-              {automationSettings.rateLimit.delayBetweenMessages / 1000}s
-            </span>
-          </div>
-        </div>
-      </div>
+      {/* Collection Actions */}
+      <div className="card p-5 space-y-4">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+          <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" /></svg>
+          Extraction Tools
+        </h3>
 
-      {/* Profile Stats */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">Profiles</h3>
-        <div className="space-y-2 text-sm mb-4">
-          <div className="flex justify-between">
-            <span className="text-gray-600">Total Collected:</span>
-            <span className="font-medium">{totalProfiles}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">After Filters:</span>
-            <span className="font-medium">{filteredProfiles.length}</span>
-          </div>
-        </div>
-
-        {/* Collection Status */}
         {collectionStatus && (
-          <div className={`mb-3 p-2 rounded text-xs ${collectionStatus.startsWith("[OK]")
-            ? "bg-green-50 text-green-700 border border-green-200"
-            : "bg-red-50 text-red-700 border border-red-200"
+          <div className={`p-3 rounded-xl text-xs font-bold animate-in zoom-in-95 ${collectionStatus.type === 'ok' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" :
+              collectionStatus.type === 'err' ? "bg-rose-50 text-rose-700 border border-rose-100" :
+                "bg-blue-50 text-blue-700 border border-blue-100"
             }`}>
-            {collectionStatus}
+            {collectionStatus.msg}
           </div>
         )}
 
-        {/* Collection Buttons */}
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 gap-2">
           <button
             onClick={onCollectCurrentProfile}
             disabled={isCollecting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-            {isCollecting ? "Collecting..." : "Collect Profile from Current Tab"}
+            className="btn-primary py-3 flex items-center justify-center gap-2">
+            {isCollecting && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            Extract Profile from Active Tab
           </button>
           <button
             onClick={onExtractProfileUrls}
             disabled={isCollecting}
-            className="w-full px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-            {isCollecting ? "Extracting..." : "Extract Profile URLs from Page"}
+            className="btn-secondary py-3 flex items-center justify-center gap-2">
+            Scan Page for Profile Links
           </button>
-          <p className="text-xs text-gray-500 mt-2">
-            Make sure you're on a startupschool.org page
-          </p>
         </div>
+        <p className="text-[10px] text-slate-400 font-medium text-center">
+          Optimal for YC Startup School matching pages and directory views.
+        </p>
       </div>
 
-      {/* Send Test Message Section */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">Test Message</h3>
+      {/* Automation Quick Controls */}
+      <div className="card p-5">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Messaging Test</h3>
+          <span className="text-[10px] bg-slate-100 text-slate-500 font-black px-2 py-0.5 rounded-full uppercase">
+            {filteredProfiles.length} Available
+          </span>
+        </div>
 
         {sendStatus && (
-          <div className={`mb-3 p-2 rounded text-xs ${sendStatus.startsWith("[OK]")
-            ? "bg-green-50 text-green-700 border border-green-200"
-            : "bg-red-50 text-red-700 border border-red-200"
+          <div className={`mb-4 p-3 rounded-xl text-xs font-bold animate-in slide-in-from-top-1 ${sendStatus.type === 'ok' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-rose-50 text-rose-700 border border-rose-100"
             }`}>
-            {sendStatus}
+            {sendStatus.msg}
           </div>
         )}
 
         <button
           onClick={onSendTestMessage}
           disabled={isSending || filteredProfiles.length === 0 || !automationSettings.openaiApiKey}
-          className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-          {isSending ? "Sending..." : filteredProfiles.length === 0
-            ? "No Profiles Available"
-            : !automationSettings.openaiApiKey
-              ? "Set API Key First"
-              : "Send Test Message to First Profile"}
+          className="w-full btn-primary bg-slate-800 hover:bg-slate-900 border-none py-3 shadow-lg shadow-slate-200">
+          {isSending ? "Processing..." : "Trigger Selective Automation"}
         </button>
-        <p className="text-xs text-gray-500 mt-2">
-          Sends a test message to the first filtered profile. Make sure OpenAI API key is set.
-        </p>
       </div>
     </div>
   )
 }
 
+function ProfilesTab({
+  profiles,
+  isSending,
+  sendStatus,
+  onSendMessage,
+  onSelectProfile,
+  onViewMessages,
+  filterSettings,
+  onFilterChange
+}: {
+  profiles: CustomerProfile[]
+  isSending: boolean
+  sendStatus: any
+  onSendMessage: (profile: CustomerProfile) => void
+  onSelectProfile: (profile: CustomerProfile) => void
+  onViewMessages: (profileId: string) => void
+  filterSettings: FilterSettings
+  onFilterChange: (field: keyof FilterSettings, value: any) => void
+}) {
+  const [showFilters, setShowFilters] = useState(false)
 
+  return (
+    <div className="flex flex-col h-full gap-4 relative">
+      <div className="flex justify-between items-center">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+          Target Profiles <span className="text-slate-400 font-medium lowercase ml-1">({profiles.length})</span>
+        </h3>
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${showFilters ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+          {showFilters ? 'Applying Filters' : 'Filter List'}
+        </button>
+      </div>
+
+      {/* Filters Overlay Sidebar */}
+      {showFilters && (
+        <div className="w-64 bg-white border-r border-slate-200 shadow-2xl h-full absolute z-40 -left-6 -top-2 p-6 animate-in slide-in-from-left duration-300">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Global Filters</h3>
+            <button onClick={() => setShowFilters(false)} className="text-slate-400 hover:text-slate-600">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            {[
+              { title: 'Geography', key: 'countries', options: COUNTRIES },
+              { title: 'Experience Level', key: 'ageGroups', options: AGE_GROUPS },
+              { title: 'Domains', key: 'interests', options: INTERESTS }
+            ].map((section) => (
+              <div key={section.key}>
+                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">{section.title}</h4>
+                <div className="space-y-2 max-h-32 overflow-y-auto pr-2 scrollbar-hide">
+                  {section.options.map((opt) => (
+                    <label key={opt} className="flex items-center gap-2.5 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={(filterSettings as any)[section.key]?.includes(opt) || false}
+                        onChange={(e) => {
+                          const current = (filterSettings as any)[section.key] || []
+                          const updated = e.target.checked ? [...current, opt] : current.filter((c: any) => c !== opt)
+                          onFilterChange(section.key as any, updated)
+                        }}
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 transition-colors"
+                      />
+                      <span className="text-xs text-slate-600 group-hover:text-slate-900 font-medium">{opt}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-8 border-t border-slate-100 pt-6">
+            <button
+              onClick={() => setShowFilters(false)}
+              className="w-full btn-primary py-2.5 shadow-indigo-100">
+              Update Results
+            </button>
+          </div>
+        </div>
+      )}
+
+      {sendStatus && (
+        <div className={`p-3 rounded-xl text-xs font-bold ${sendStatus.type === 'ok' ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-rose-50 text-rose-700 border border-rose-100"
+          }`}>
+          {sendStatus.msg}
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-hide">
+        {profiles.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 p-6 text-center">
+            <div className="w-12 h-12 bg-slate-200 rounded-full flex items-center justify-center text-slate-400 mb-4">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+            </div>
+            <h4 className="text-sm font-bold text-slate-800 mb-1">No profiles matched</h4>
+            <p className="text-xs text-slate-500 font-medium">Try loosening your filters or trigger a fresh extraction.</p>
+          </div>
+        ) : (
+          profiles.map((profile) => (
+            <div
+              key={profile.id}
+              className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 flex items-center justify-between hover:border-indigo-300 transition-all group">
+              <button
+                onClick={() => onSelectProfile(profile)}
+                className="text-left flex-1 min-w-0 pr-4">
+                <div className="flex items-baseline gap-2 mb-1">
+                  <h4 className="font-bold text-slate-800 text-sm truncate uppercase tracking-tight">{profile.name}</h4>
+                  {profile.messageCount > 0 && (
+                    <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 text-[8px] font-black uppercase rounded border border-indigo-100">
+                      {profile.messageCount} msg
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium flex items-center gap-1">
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>
+                  {profile.country || "Remote"} • {profile.interests?.slice(0, 1).join("") || "Generalist"}
+                </p>
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onViewMessages(profile.id)}
+                  className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-transparent hover:border-indigo-100"
+                  title="History">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </button>
+                <button
+                  onClick={() => onSendMessage(profile)}
+                  disabled={isSending}
+                  className="btn-primary py-2 px-4 shadow-indigo-100 flex items-center gap-2">
+                  {isSending ? <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Send'}
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MessagesTab({
+  messageHistory,
+  selectedProfileId,
+  onProfileSelect,
+  profiles
+}: {
+  messageHistory: MessageHistory[]
+  selectedProfileId: string | null
+  onProfileSelect: (profileId: string | null) => void
+  profiles: CustomerProfile[]
+}) {
+  const filteredHistory = selectedProfileId
+    ? messageHistory.filter((h) => h.profileId === selectedProfileId)
+    : messageHistory
+
+  return (
+    <div className="space-y-6">
+      {/* Profile Selector */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight">Activity Log</h3>
+        <div className="flex gap-2 pb-2 overflow-x-auto scrollbar-hide">
+          <button
+            onClick={() => onProfileSelect(null)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all border whitespace-nowrap ${selectedProfileId === null ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+              }`}>
+            All Global Events
+          </button>
+          {profiles.filter(p => p.messageCount > 0).slice(0, 8).map((profile) => (
+            <button
+              key={profile.id}
+              onClick={() => onProfileSelect(profile.id)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all border whitespace-nowrap ${selectedProfileId === profile.id ? "bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100" : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
+                }`}>
+              {profile.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* History List */}
+      <div className="space-y-4">
+        {filteredHistory.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-dashed border-slate-200">
+            <p className="text-sm font-bold text-slate-800">No sent history</p>
+            <p className="text-[11px] text-slate-400 font-medium">Trigger an automation to populate this list.</p>
+          </div>
+        ) : (
+          filteredHistory.map((msg) => (
+            <div key={msg.id} className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 hover:border-indigo-200 transition-all">
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${msg.success ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                    {msg.profileName.charAt(0)}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-800 tracking-tight">{msg.profileName}</h4>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{formatDateTime(msg.sentAt)}</p>
+                  </div>
+                </div>
+                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${msg.success ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-rose-100 text-rose-700 border border-rose-200'}`}>
+                  {msg.success ? 'Success' : 'Failed'}
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-xl">
+                <p className="text-xs text-slate-600 italic leading-relaxed whitespace-pre-wrap">
+                  {msg.message || "(Empty response payload)"}
+                </p>
+              </div>
+
+              {(msg.error || msg.openaiModel) && (
+                <div className="mt-4 flex justify-between items-center text-[9px] font-black uppercase tracking-widest px-1">
+                  {msg.error && <span className="text-rose-500">Error: {msg.error}</span>}
+                  {msg.openaiModel && <span className="text-slate-300 ml-auto">{msg.openaiModel}</span>}
+                </div>
+              )}
+            </div>
+          )).reverse()
+        )}
+      </div>
+    </div>
+  )
+}
 
 function SettingsTab({
   automationSettings,
@@ -707,421 +827,129 @@ function SettingsTab({
   onModelChange: (model: string) => void
 }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 pb-12">
       {/* OpenAI API Key */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">OpenAI API Key</h3>
-        <div className="space-y-2">
-          <div className="flex space-x-2">
-            <input
-              type={showApiKey ? "text" : "password"}
-              value={apiKeyInput}
-              onChange={(e) => onApiKeyChange(e.target.value)}
-              placeholder="sk-..."
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button
-              onClick={() => onShowApiKeyChange(!showApiKey)}
-              className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800">
-              {showApiKey ? "Hide" : "Show"}
-            </button>
+      <section className="space-y-4">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+          <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+          API Credentials
+        </h3>
+        <div className="card p-6 space-y-5">
+          <div className="space-y-2">
+            <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-1">OpenAI Secret Key</label>
+            <div className="relative group">
+              <input
+                type={showApiKey ? "text" : "password"}
+                value={apiKeyInput}
+                onChange={(e) => onApiKeyChange(e.target.value)}
+                placeholder="sk-..."
+                className="input-field py-3 pr-16"
+              />
+              <button
+                onClick={() => onShowApiKeyChange(!showApiKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase text-indigo-600 hover:text-indigo-800 tracking-tighter bg-indigo-50 px-2 py-1 rounded">
+                {showApiKey ? "Hide" : "Show"}
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-400 font-medium pl-1 italic">Saved locally. We never transmit your key elsewhere.</p>
           </div>
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">Sender Name</label>
+
+          <div className="space-y-2">
+            <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-1">Sender Profile Identity</label>
             <input
               type="text"
               value={senderNameInput}
               onChange={(e) => onSenderNameChange(e.target.value)}
-              placeholder="Your name"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Full name for signatures..."
+              className="input-field py-3"
             />
           </div>
-          <button
-            onClick={onSaveApiKey}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium">
-            Save Settings
-          </button>
-          {saveStatus && (
-            <p
-              className={`text-xs ${saveStatus.toLowerCase().includes("saved") ? "text-green-600" : "text-amber-600"
-                }`}>
-              {saveStatus}
-            </p>
-          )}
-          <p className="text-xs text-gray-500">
-            Your API key is stored locally and never shared
-          </p>
+
+          <div className="space-y-4 pt-2">
+            <button onClick={onSaveApiKey} className="w-full btn-primary py-3.5 shadow-indigo-200">
+              Synchronize Configuration
+            </button>
+            {saveStatus && <p className="text-center text-emerald-600 text-xs font-bold animate-in fade-in">{saveStatus}</p>}
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* Danger Zone */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-red-200">
-        <h3 className="font-semibold text-red-700 mb-2">Reset Extension</h3>
-        <p className="text-xs text-red-600 mb-3">
-          Clears all saved profiles, history, templates, settings, and API key from local storage.
-        </p>
-        <button
-          onClick={onResetExtension}
-          disabled={isResetting}
-          className={`w-full px-4 py-2 rounded-md text-sm font-medium transition-colors ${isResetting
-            ? "bg-red-300 text-white cursor-not-allowed"
-            : "bg-red-600 text-white hover:bg-red-700"
-            }`}>
-          {isResetting ? "Resetting..." : "Reset Extension Data"}
-        </button>
-        {resetStatus && (
-          <p
-            className={`text-xs mt-2 ${resetStatus.startsWith("[OK]")
-              ? "text-green-600"
-              : "text-red-600"
-              }`}>
-            {resetStatus}
-          </p>
-        )}
-      </div>
-
-      {/* Rate Limits */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">Rate Limits</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Messages Per Hour
-            </label>
+      {/* Constraints & Limits */}
+      <section className="space-y-4">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+          <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          Throttle Control
+        </h3>
+        <div className="card p-6 grid grid-cols-2 gap-x-6 gap-y-5">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-1">Hourly Cap</label>
             <input
               type="number"
               value={automationSettings.rateLimit.messagesPerHour}
-              onChange={(e) =>
-                onRateLimitChange("messagesPerHour", parseInt(e.target.value) || 0)
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => onRateLimitChange("messagesPerHour", parseInt(e.target.value) || 0)}
+              className="input-field"
             />
           </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Messages Per Day
-            </label>
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-1">Daily Cap</label>
             <input
               type="number"
               value={automationSettings.rateLimit.messagesPerDay}
-              onChange={(e) =>
-                onRateLimitChange("messagesPerDay", parseInt(e.target.value) || 0)
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => onRateLimitChange("messagesPerDay", parseInt(e.target.value) || 0)}
+              className="input-field"
             />
           </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Delay Between Messages (seconds)
-            </label>
+          <div className="col-span-2 space-y-1.5">
+            <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-1">Cooldown Interval (Sec)</label>
             <input
               type="number"
               value={automationSettings.rateLimit.delayBetweenMessages / 1000}
-              onChange={(e) =>
-                onRateLimitChange(
-                  "delayBetweenMessages",
-                  (parseInt(e.target.value) || 0) * 1000
-                )
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onChange={(e) => onRateLimitChange("delayBetweenMessages", (parseInt(e.target.value) || 0) * 1000)}
+              className="input-field"
             />
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Model Selection */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">AI Model</h3>
-        <select
-          value={automationSettings.openaiModel}
-          onChange={(e) => onModelChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          {OPENAI_MODELS.map((model) => (
-            <option key={model} value={model}>
-              {model}
-            </option>
-          ))}
-        </select>
-      </div>
-    </div>
-  )
-}
-
-function ProfilesTab({
-  profiles,
-  isSending,
-  sendStatus,
-  onSendMessage,
-  onSelectProfile,
-  onViewMessages,
-  filterSettings,
-  onFilterChange
-}: {
-  profiles: CustomerProfile[]
-  isSending: boolean
-  sendStatus: string | null
-  onSendMessage: (profile: CustomerProfile) => void
-  onSelectProfile: (profile: CustomerProfile) => void
-  onViewMessages: (profileId: string) => void
-  filterSettings: FilterSettings
-  onFilterChange: (field: keyof FilterSettings, value: any) => void
-}) {
-  const [showFilters, setShowFilters] = useState(false)
-
-  return (
-    <div className="flex h-full gap-4 relative">
-      {/* Filters Sidebar - Overlay on mobile size, or side-by-side if enough space */}
-      {showFilters && (
-        <div className="w-56 flex-shrink-0 bg-white rounded-lg border border-gray-200 shadow-sm h-full overflow-y-auto absolute z-10 left-0 top-0 bottom-0 p-4 animate-in slide-in-from-left duration-200">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold text-gray-800">Filters</h3>
-            <button onClick={() => setShowFilters(false)} className="text-gray-500 hover:text-gray-700">
-              <span className="sr-only">Close</span>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-          </div>
-
-          <div className="space-y-4">
-            {/* Country Filter */}
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Countries</h4>
-              <div className="space-y-1.5">
-                {COUNTRIES.map((country) => (
-                  <label key={country} className="flex items-center space-x-2 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={filterSettings.countries?.includes(country) || false}
-                      onChange={(e) => {
-                        const current = filterSettings.countries || []
-                        const updated = e.target.checked
-                          ? [...current, country]
-                          : current.filter((c) => c !== country)
-                        onFilterChange("countries", updated)
-                      }}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-xs text-gray-700 group-hover:text-gray-900">{country}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Age Group Filter */}
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Age Groups</h4>
-              <div className="space-y-1.5">
-                {AGE_GROUPS.map((ageGroup) => (
-                  <label key={ageGroup} className="flex items-center space-x-2 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={filterSettings.ageGroups?.includes(ageGroup) || false}
-                      onChange={(e) => {
-                        const current = filterSettings.ageGroups || []
-                        const updated = e.target.checked
-                          ? [...current, ageGroup]
-                          : current.filter((a) => a !== ageGroup)
-                        onFilterChange("ageGroups", updated)
-                      }}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-xs text-gray-700 group-hover:text-gray-900">{ageGroup}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Interests Filter */}
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Interests</h4>
-              <div className="space-y-1.5">
-                {INTERESTS.map((interest) => (
-                  <label key={interest} className="flex items-center space-x-2 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={filterSettings.interests?.includes(interest) || false}
-                      onChange={(e) => {
-                        const current = filterSettings.interests || []
-                        const updated = e.target.checked
-                          ? [...current, interest]
-                          : current.filter((i) => i !== interest)
-                        onFilterChange("interests", updated)
-                      }}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-xs text-gray-700 group-hover:text-gray-900">{interest}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
+      {/* Intelligence Module */}
+      <section className="space-y-4">
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+          <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+          Cognitive Core
+        </h3>
+        <div className="card p-6">
+          <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-1 mb-2 block">Processing Model</label>
+          <select
+            value={automationSettings.openaiModel}
+            onChange={(e) => onModelChange(e.target.value)}
+            className="input-field appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D%2220%22%20height%3D%2220%22%20viewBox%3D%220%200%2020%2020%22%20fill%3D%22none%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cpath%20d%3D%22M7%207L10%2010L13%207%22%20stroke%3D%22%2364748B%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E')] bg-[position:right_0.5rem_center] bg-no-repeat pr-10">
+            {OPENAI_MODELS.map((model) => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </select>
         </div>
-      )}
+      </section>
 
-      <div className="flex-1 flex flex-col h-full">
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="font-semibold text-gray-800">
-            Profiles ({profiles.length})
-          </h3>
+      {/* Danger Zone */}
+      <section className="space-y-4">
+        <h3 className="text-sm font-black text-rose-700 uppercase tracking-tight flex items-center gap-2">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+          Cleanup Factory
+        </h3>
+        <div className="card p-6 border-rose-100 bg-rose-50/30">
+          <p className="text-[11px] font-bold text-rose-600 mb-4 line-height-relaxed pl-1 uppercase tracking-tighter">Warning: This action nukes all collected data and local keys permanently.</p>
           <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1 ${showFilters ? 'bg-blue-100 text-blue-700' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm'}`}
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
-            {showFilters ? 'Hide Filters' : 'Filters'}
-          </button>
-        </div>
-
-        {sendStatus && (
-          <div className={`mb-3 p-2 rounded text-xs ${sendStatus.startsWith("[OK]")
-            ? "bg-green-50 text-green-700 border border-green-200"
-            : "bg-red-50 text-red-700 border border-red-200"
-            }`}>
-            {sendStatus}
-          </div>
-        )}
-
-        <div className="space-y-2 flex-1 overflow-y-auto pr-1">
-          {profiles.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-lg border border-dashed border-gray-300">
-              <p className="text-gray-500 text-sm mb-1">No profiles found</p>
-              <p className="text-gray-400 text-xs">Try adjusting your filters or collecting more profiles.</p>
-            </div>
-          ) : (
-            profiles.map((profile) => (
-              <div
-                key={profile.id}
-                className="bg-white rounded-lg p-3 shadow-sm border border-gray-200 flex items-center justify-between hover:shadow-md transition-shadow group">
-                <button
-                  onClick={() => onSelectProfile(profile)}
-                  className="text-left flex-1 pr-3">
-                  <p className="font-medium text-gray-800 group-hover:text-blue-600 transition-colors">{profile.name}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {profile.country || "Unknown location"} •{" "}
-                    {profile.interests?.slice(0, 2).join(", ") || "No interests"}
-                  </p>
-                </button>
-                <div className="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => onViewMessages(profile.id)}
-                    className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 border border-gray-200 font-medium transition-colors">
-                    History
-                  </button>
-                  <button
-                    onClick={() => onSendMessage(profile)}
-                    disabled={isSending}
-                    className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                    {isSending ? "..." : "Send"}
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function MessagesTab({
-  messageHistory,
-  selectedProfileId,
-  onProfileSelect,
-  profiles
-}: {
-  messageHistory: MessageHistory[]
-  selectedProfileId: string | null
-  onProfileSelect: (profileId: string | null) => void
-  profiles: CustomerProfile[]
-}) {
-  const filteredHistory = selectedProfileId
-    ? messageHistory.filter((h) => h.profileId === selectedProfileId)
-    : messageHistory
-
-  return (
-    <div className="space-y-4">
-      {/* Filter by Profile */}
-      <div className="bg-white rounded-lg p-5 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-lg text-gray-800 mb-4">Filter by Profile</h3>
-        <div className="flex gap-2 flex-wrap">
-          <button
-            onClick={() => onProfileSelect(null)}
-            className={`px-4 py-2 text-sm rounded-md transition-colors font-medium ${selectedProfileId === null
-              ? "bg-blue-600 text-white"
-              : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+            onClick={onResetExtension}
+            disabled={isResetting}
+            className={`w-full py-3.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${isResetting ? "bg-rose-200 text-white cursor-not-allowed" : "bg-rose-600 text-white hover:bg-rose-700 shadow-lg shadow-rose-200"
               }`}>
-            All Messages
+            {isResetting ? "Wiping Database..." : "Factory Reset Extension"}
           </button>
-          {profiles.slice(0, 10).map((profile) => (
-            <button
-              key={profile.id}
-              onClick={() => onProfileSelect(profile.id)}
-              className={`px-4 py-2 text-sm rounded-md transition-colors font-medium ${selectedProfileId === profile.id
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}>
-              {profile.name}
-            </button>
-          ))}
+          {resetStatus && <p className="text-center text-rose-600 text-xs font-bold mt-3 animate-in fade-in">{resetStatus}</p>}
         </div>
-      </div>
-
-      {/* Message History */}
-      <div className="space-y-3">
-        <div className="flex justify-between items-center">
-          <h3 className="font-semibold text-lg text-gray-800">
-            Message History ({filteredHistory.length})
-          </h3>
-        </div>
-        <div className="space-y-3 max-h-[500px] overflow-y-auto">
-          {filteredHistory.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 text-base">
-              No messages sent yet. Messages will appear here once you start sending.
-            </div>
-          ) : (
-            filteredHistory.map((msg) => (
-              <div
-                key={msg.id}
-                className={`bg-white rounded-lg p-5 shadow-sm border-2 ${msg.success
-                  ? "border-green-200 bg-green-50"
-                  : "border-red-200 bg-red-50"
-                  }`}>
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="font-semibold text-base text-gray-800">{msg.profileName}</span>
-                      <span
-                        className={`text-sm px-3 py-1 rounded ${msg.success
-                          ? "bg-green-200 text-green-700"
-                          : "bg-red-200 text-red-700"
-                          }`}>
-                        {msg.success ? "[OK] Sent" : "[ERR] Failed"}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-500 mb-3">
-                      {formatDateTime(msg.sentAt)}
-                    </p>
-                  </div>
-                </div>
-                <div className="bg-white rounded-lg p-4 border-2 border-gray-300 mb-3 min-h-[80px]">
-                  <p className="text-base text-gray-800 whitespace-pre-wrap leading-relaxed">
-                    {msg.message || "(No message content)"}
-                  </p>
-                </div>
-                {msg.error && (
-                  <p className="text-sm text-red-600 mt-2 font-medium">Error: {msg.error}</p>
-                )}
-                {msg.openaiModel && (
-                  <p className="text-sm text-gray-500 mt-2">Model: {msg.openaiModel}</p>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+      </section>
     </div>
   )
 }
 
 export default IndexPopup
-
-
