@@ -24,7 +24,7 @@ import { COUNTRIES, AGE_GROUPS, INTERESTS, OPENAI_MODELS } from "~/utils/constan
 import { serializeProfile } from "~/utils/serialization"
 import { createPortal } from "react-dom"
 
-type Tab = "dashboard" | "filters" | "settings" | "profiles" | "messages"
+type Tab = "dashboard" | "settings" | "profiles" | "messages"
 
 function formatDateTime(value: Date | string | number | null | undefined) {
   const d = value instanceof Date ? value : value ? new Date(value) : null
@@ -110,11 +110,11 @@ function IndexPopup() {
 
   async function handleToggleAutomation() {
     if (!automationSettings) return
-    
+
     const updated = { ...automationSettings, enabled: !automationSettings.enabled }
     setAutomationSettings(updated)
     await saveAutomationSettings(updated)
-    
+
     if (updated.enabled && updated.openaiApiKey) {
       initializeOpenAI(updated.openaiApiKey)
     }
@@ -122,13 +122,13 @@ function IndexPopup() {
 
   async function handleSaveApiKey() {
     if (!automationSettings) return
-    
+
     const trimmedKey = apiKeyInput.trim()
     const trimmedName = senderNameInput.trim()
     const updated = { ...automationSettings, openaiApiKey: trimmedKey, senderName: trimmedName }
     setAutomationSettings(updated)
     await saveAutomationSettings(updated)
-    
+
     if (trimmedKey) {
       initializeOpenAI(trimmedKey)
       setSaveStatus("API key saved")
@@ -143,7 +143,7 @@ function IndexPopup() {
 
   async function handleUpdateRateLimit(field: string, value: number) {
     if (!automationSettings) return
-    
+
     const updated = {
       ...automationSettings,
       rateLimit: {
@@ -160,7 +160,7 @@ function IndexPopup() {
 
   async function handleModelChange(model: string) {
     if (!automationSettings) return
-    
+
     const updated = { ...automationSettings, openaiModel: model }
     setAutomationSettings(updated)
     await saveAutomationSettings(updated)
@@ -189,19 +189,19 @@ function IndexPopup() {
     setIsCollecting(true)
     setCollectionStatus("Collecting profile from current tab...")
     console.log("[Popup] Starting profile collection...")
-    
+
     try {
       // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error("Request timeout after 45 seconds")), 45000)
       )
-      
+
       const responsePromise = chrome.runtime.sendMessage({ action: "extractCurrentProfile" })
-      
+
       const response = await Promise.race([responsePromise, timeoutPromise]) as any
-      
+
       console.log("[Popup] Received response:", response)
-      
+
       if (response && response.success && response.profile) {
         setCollectionStatus(`[OK] Profile collected: ${response.profile.name}`)
         await loadData() // Reload profiles
@@ -226,10 +226,10 @@ function IndexPopup() {
   async function handleExtractProfileUrls() {
     setIsCollecting(true)
     setCollectionStatus("Extracting profile URLs from current page...")
-    
+
     try {
       const response = await chrome.runtime.sendMessage({ action: "extractProfileUrls" })
-      
+
       if (response.success && response.urls) {
         const count = response.urls.length
         setCollectionStatus(`[OK] Found ${count} profile URL${count !== 1 ? "s" : ""}`)
@@ -266,7 +266,7 @@ function IndexPopup() {
     try {
       // Use provided profile or get first filtered profile
       const targetProfile = profile || filteredProfiles[0]
-      
+
       if (!targetProfile) {
         setSendStatus("[ERR] No profiles available to message")
         setTimeout(() => setSendStatus(null), 3000)
@@ -308,7 +308,7 @@ function IndexPopup() {
 
   async function handleFilterChange(field: keyof FilterSettings, value: any) {
     if (!filterSettings) return
-    
+
     const updated = { ...filterSettings, [field]: value }
     setFilterSettings(updated)
     await saveFilterSettings(updated)
@@ -330,13 +330,11 @@ function IndexPopup() {
           <h1 className="text-xl font-bold">YCStartupSchool Messenger</h1>
           <button
             onClick={handleToggleAutomation}
-            className={`w-12 h-6 rounded-full transition-all duration-300 ${
-              automationSettings.enabled ? "bg-green-400" : "bg-gray-300"
-            }`}>
+            className={`w-12 h-6 rounded-full transition-all duration-300 ${automationSettings.enabled ? "bg-green-400" : "bg-gray-300"
+              }`}>
             <span
-              className={`block w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${
-                automationSettings.enabled ? "translate-x-6" : "translate-x-1"
-              }`}
+              className={`block w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ${automationSettings.enabled ? "translate-x-6" : "translate-x-1"
+                }`}
             />
           </button>
         </div>
@@ -346,89 +344,91 @@ function IndexPopup() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 bg-white overflow-x-auto scrollbar-hide">
-        {(["dashboard", "filters", "settings", "profiles", "messages"] as Tab[]).map((tab) => (
+      <div className="flex border-b border-gray-200 bg-white overflow-x-auto scrollbar-hide flex-shrink-0">
+        {(["dashboard", "profiles", "messages", "settings"] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-shrink-0 px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap ${
-              activeTab === tab
-                ? "text-blue-600 border-b-2 border-blue-600"
-                : "text-gray-600 hover:text-gray-900"
-            }`}>
+            className={`flex-shrink-0 px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === tab
+              ? "text-blue-600 border-b-2 border-blue-600"
+              : "text-gray-600 hover:text-gray-900"
+              }`}>
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-hidden bg-gray-50 relative">
         {activeTab === "dashboard" && (
-          <DashboardTab
-            stats={stats}
-            automationSettings={automationSettings}
-            filteredProfiles={filteredProfiles}
-            totalProfiles={profiles.length}
-            isCollecting={isCollecting}
-            collectionStatus={collectionStatus}
-            isSending={isSending}
-            sendStatus={sendStatus}
-            onCollectCurrentProfile={handleCollectCurrentProfile}
-            onExtractProfileUrls={handleExtractProfileUrls}
-            onSendTestMessage={handleSendTestMessage}
-          />
-        )}
-
-        {activeTab === "filters" && (
-          <FiltersTab
-            filterSettings={filterSettings}
-            onFilterChange={handleFilterChange}
-          />
+          <div className="h-full overflow-y-auto p-4">
+            <DashboardTab
+              stats={stats}
+              automationSettings={automationSettings}
+              filteredProfiles={filteredProfiles}
+              totalProfiles={profiles.length}
+              isCollecting={isCollecting}
+              collectionStatus={collectionStatus}
+              isSending={isSending}
+              sendStatus={sendStatus}
+              onCollectCurrentProfile={handleCollectCurrentProfile}
+              onExtractProfileUrls={handleExtractProfileUrls}
+              onSendTestMessage={handleSendTestMessage}
+            />
+          </div>
         )}
 
         {activeTab === "settings" && (
-          <SettingsTab
-            automationSettings={automationSettings}
-            apiKeyInput={apiKeyInput}
-            senderNameInput={senderNameInput}
-            showApiKey={showApiKey}
-            saveStatus={saveStatus}
-            resetStatus={resetStatus}
-            onApiKeyChange={setApiKeyInput}
-            onSenderNameChange={setSenderNameInput}
-            onShowApiKeyChange={setShowApiKey}
-            onSaveApiKey={handleSaveApiKey}
-            onResetExtension={handleResetExtension}
-            isResetting={isResetting}
-            onRateLimitChange={handleUpdateRateLimit}
-            onModelChange={handleModelChange}
-          />
+          <div className="h-full overflow-y-auto p-4">
+            <SettingsTab
+              automationSettings={automationSettings}
+              apiKeyInput={apiKeyInput}
+              senderNameInput={senderNameInput}
+              showApiKey={showApiKey}
+              saveStatus={saveStatus}
+              resetStatus={resetStatus}
+              onApiKeyChange={setApiKeyInput}
+              onSenderNameChange={setSenderNameInput}
+              onShowApiKeyChange={setShowApiKey}
+              onSaveApiKey={handleSaveApiKey}
+              onResetExtension={handleResetExtension}
+              isResetting={isResetting}
+              onRateLimitChange={handleUpdateRateLimit}
+              onModelChange={handleModelChange}
+            />
+          </div>
         )}
 
         {activeTab === "profiles" && (
-          <ProfilesTab 
-            profiles={filteredProfiles}
-            isSending={isSending}
-            sendStatus={sendStatus}
-            onSendMessage={handleSendTestMessage}
-            onSelectProfile={(profile) => {
-              setModalProfile(profile)
-              setIsModalOpen(true)
-            }}
-            onViewMessages={(profileId) => {
-              setSelectedProfileId(profileId)
-              setActiveTab("messages")
-            }}
-          />
+          <div className="h-full w-full p-4 overflow-hidden">
+            <ProfilesTab
+              profiles={filteredProfiles}
+              isSending={isSending}
+              sendStatus={sendStatus}
+              onSendMessage={handleSendTestMessage}
+              onSelectProfile={(profile) => {
+                setModalProfile(profile)
+                setIsModalOpen(true)
+              }}
+              onViewMessages={(profileId) => {
+                setSelectedProfileId(profileId)
+                setActiveTab("messages")
+              }}
+              filterSettings={filterSettings}
+              onFilterChange={handleFilterChange}
+            />
+          </div>
         )}
 
         {activeTab === "messages" && (
-          <MessagesTab
-            messageHistory={messageHistory}
-            selectedProfileId={selectedProfileId}
-            onProfileSelect={setSelectedProfileId}
-            profiles={profiles}
-          />
+          <div className="h-full overflow-y-auto p-4">
+            <MessagesTab
+              messageHistory={messageHistory}
+              selectedProfileId={selectedProfileId}
+              onProfileSelect={setSelectedProfileId}
+              profiles={profiles}
+            />
+          </div>
         )}
       </div>
       {isModalOpen && modalProfile &&
@@ -614,11 +614,10 @@ function DashboardTab({
 
         {/* Collection Status */}
         {collectionStatus && (
-          <div className={`mb-3 p-2 rounded text-xs ${
-            collectionStatus.startsWith("[OK]") 
-              ? "bg-green-50 text-green-700 border border-green-200" 
-              : "bg-red-50 text-red-700 border border-red-200"
-          }`}>
+          <div className={`mb-3 p-2 rounded text-xs ${collectionStatus.startsWith("[OK]")
+            ? "bg-green-50 text-green-700 border border-green-200"
+            : "bg-red-50 text-red-700 border border-red-200"
+            }`}>
             {collectionStatus}
           </div>
         )}
@@ -646,13 +645,12 @@ function DashboardTab({
       {/* Send Test Message Section */}
       <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
         <h3 className="font-semibold text-gray-800 mb-3">Test Message</h3>
-        
+
         {sendStatus && (
-          <div className={`mb-3 p-2 rounded text-xs ${
-            sendStatus.startsWith("[OK]") 
-              ? "bg-green-50 text-green-700 border border-green-200" 
-              : "bg-red-50 text-red-700 border border-red-200"
-          }`}>
+          <div className={`mb-3 p-2 rounded text-xs ${sendStatus.startsWith("[OK]")
+            ? "bg-green-50 text-green-700 border border-green-200"
+            : "bg-red-50 text-red-700 border border-red-200"
+            }`}>
             {sendStatus}
           </div>
         )}
@@ -661,11 +659,11 @@ function DashboardTab({
           onClick={onSendTestMessage}
           disabled={isSending || filteredProfiles.length === 0 || !automationSettings.openaiApiKey}
           className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-          {isSending ? "Sending..." : filteredProfiles.length === 0 
-            ? "No Profiles Available" 
+          {isSending ? "Sending..." : filteredProfiles.length === 0
+            ? "No Profiles Available"
             : !automationSettings.openaiApiKey
-            ? "Set API Key First"
-            : "Send Test Message to First Profile"}
+              ? "Set API Key First"
+              : "Send Test Message to First Profile"}
         </button>
         <p className="text-xs text-gray-500 mt-2">
           Sends a test message to the first filtered profile. Make sure OpenAI API key is set.
@@ -675,89 +673,7 @@ function DashboardTab({
   )
 }
 
-function FiltersTab({
-  filterSettings,
-  onFilterChange
-}: {
-  filterSettings: FilterSettings
-  onFilterChange: (field: keyof FilterSettings, value: any) => void
-}) {
-  return (
-    <div className="space-y-4">
-      {/* Country Filter */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">Countries</h3>
-        <div className="max-h-40 overflow-y-auto space-y-2">
-          {COUNTRIES.map((country) => (
-            <label key={country} className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={filterSettings.countries?.includes(country) || false}
-                onChange={(e) => {
-                  const current = filterSettings.countries || []
-                  const updated = e.target.checked
-                    ? [...current, country]
-                    : current.filter((c) => c !== country)
-                  onFilterChange("countries", updated)
-                }}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm text-gray-700">{country}</span>
-            </label>
-          ))}
-        </div>
-      </div>
 
-      {/* Age Group Filter */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">Age Groups</h3>
-        <div className="space-y-2">
-          {AGE_GROUPS.map((ageGroup) => (
-            <label key={ageGroup} className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={filterSettings.ageGroups?.includes(ageGroup) || false}
-                onChange={(e) => {
-                  const current = filterSettings.ageGroups || []
-                  const updated = e.target.checked
-                    ? [...current, ageGroup]
-                    : current.filter((a) => a !== ageGroup)
-                  onFilterChange("ageGroups", updated)
-                }}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm text-gray-700">{ageGroup}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Interests Filter */}
-      <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-        <h3 className="font-semibold text-gray-800 mb-3">Interests</h3>
-        <div className="space-y-2">
-          {INTERESTS.map((interest) => (
-            <label key={interest} className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={filterSettings.interests?.includes(interest) || false}
-                onChange={(e) => {
-                  const current = filterSettings.interests || []
-                  const updated = e.target.checked
-                    ? [...current, interest]
-                    : current.filter((i) => i !== interest)
-                  onFilterChange("interests", updated)
-                }}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm text-gray-700">{interest}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function SettingsTab({
   automationSettings,
@@ -827,9 +743,8 @@ function SettingsTab({
           </button>
           {saveStatus && (
             <p
-              className={`text-xs ${
-                saveStatus.toLowerCase().includes("saved") ? "text-green-600" : "text-amber-600"
-              }`}>
+              className={`text-xs ${saveStatus.toLowerCase().includes("saved") ? "text-green-600" : "text-amber-600"
+                }`}>
               {saveStatus}
             </p>
           )}
@@ -848,20 +763,18 @@ function SettingsTab({
         <button
           onClick={onResetExtension}
           disabled={isResetting}
-          className={`w-full px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            isResetting
-              ? "bg-red-300 text-white cursor-not-allowed"
-              : "bg-red-600 text-white hover:bg-red-700"
-          }`}>
+          className={`w-full px-4 py-2 rounded-md text-sm font-medium transition-colors ${isResetting
+            ? "bg-red-300 text-white cursor-not-allowed"
+            : "bg-red-600 text-white hover:bg-red-700"
+            }`}>
           {isResetting ? "Resetting..." : "Reset Extension Data"}
         </button>
         {resetStatus && (
           <p
-            className={`text-xs mt-2 ${
-              resetStatus.startsWith("[OK]")
-                ? "text-green-600"
-                : "text-red-600"
-            }`}>
+            className={`text-xs mt-2 ${resetStatus.startsWith("[OK]")
+              ? "text-green-600"
+              : "text-red-600"
+              }`}>
             {resetStatus}
           </p>
         )}
@@ -934,69 +847,170 @@ function SettingsTab({
   )
 }
 
-function ProfilesTab({ 
+function ProfilesTab({
   profiles,
   isSending,
   sendStatus,
   onSendMessage,
   onSelectProfile,
-  onViewMessages
-}: { 
+  onViewMessages,
+  filterSettings,
+  onFilterChange
+}: {
   profiles: CustomerProfile[]
   isSending: boolean
   sendStatus: string | null
   onSendMessage: (profile: CustomerProfile) => void
   onSelectProfile: (profile: CustomerProfile) => void
   onViewMessages: (profileId: string) => void
+  filterSettings: FilterSettings
+  onFilterChange: (field: keyof FilterSettings, value: any) => void
 }) {
+  const [showFilters, setShowFilters] = useState(false)
+
   return (
-      <div className="space-y-2">
+    <div className="flex h-full gap-4 relative">
+      {/* Filters Sidebar - Overlay on mobile size, or side-by-side if enough space */}
+      {showFilters && (
+        <div className="w-56 flex-shrink-0 bg-white rounded-lg border border-gray-200 shadow-sm h-full overflow-y-auto absolute z-10 left-0 top-0 bottom-0 p-4 animate-in slide-in-from-left duration-200">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="font-semibold text-gray-800">Filters</h3>
+            <button onClick={() => setShowFilters(false)} className="text-gray-500 hover:text-gray-700">
+              <span className="sr-only">Close</span>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            {/* Country Filter */}
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Countries</h4>
+              <div className="space-y-1.5">
+                {COUNTRIES.map((country) => (
+                  <label key={country} className="flex items-center space-x-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={filterSettings.countries?.includes(country) || false}
+                      onChange={(e) => {
+                        const current = filterSettings.countries || []
+                        const updated = e.target.checked
+                          ? [...current, country]
+                          : current.filter((c) => c !== country)
+                        onFilterChange("countries", updated)
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-xs text-gray-700 group-hover:text-gray-900">{country}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Age Group Filter */}
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Age Groups</h4>
+              <div className="space-y-1.5">
+                {AGE_GROUPS.map((ageGroup) => (
+                  <label key={ageGroup} className="flex items-center space-x-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={filterSettings.ageGroups?.includes(ageGroup) || false}
+                      onChange={(e) => {
+                        const current = filterSettings.ageGroups || []
+                        const updated = e.target.checked
+                          ? [...current, ageGroup]
+                          : current.filter((a) => a !== ageGroup)
+                        onFilterChange("ageGroups", updated)
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-xs text-gray-700 group-hover:text-gray-900">{ageGroup}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Interests Filter */}
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Interests</h4>
+              <div className="space-y-1.5">
+                {INTERESTS.map((interest) => (
+                  <label key={interest} className="flex items-center space-x-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={filterSettings.interests?.includes(interest) || false}
+                      onChange={(e) => {
+                        const current = filterSettings.interests || []
+                        const updated = e.target.checked
+                          ? [...current, interest]
+                          : current.filter((i) => i !== interest)
+                        onFilterChange("interests", updated)
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-xs text-gray-700 group-hover:text-gray-900">{interest}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col h-full">
         <div className="flex justify-between items-center mb-3">
           <h3 className="font-semibold text-gray-800">
             Profiles ({profiles.length})
           </h3>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1 ${showFilters ? 'bg-blue-100 text-blue-700' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm'}`}
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+            {showFilters ? 'Hide Filters' : 'Filters'}
+          </button>
         </div>
 
         {sendStatus && (
-          <div className={`mb-3 p-2 rounded text-xs ${
-            sendStatus.startsWith("[OK]") 
-              ? "bg-green-50 text-green-700 border border-green-200" 
-              : "bg-red-50 text-red-700 border border-red-200"
-          }`}>
+          <div className={`mb-3 p-2 rounded text-xs ${sendStatus.startsWith("[OK]")
+            ? "bg-green-50 text-green-700 border border-green-200"
+            : "bg-red-50 text-red-700 border border-red-200"
+            }`}>
             {sendStatus}
           </div>
         )}
 
-        <div className="space-y-2 max-h-96 overflow-y-auto">
+        <div className="space-y-2 flex-1 overflow-y-auto pr-1">
           {profiles.length === 0 ? (
-            <div className="text-center py-8 text-gray-500 text-sm">
-              No profiles collected yet. Profiles will appear here once collected.
+            <div className="text-center py-12 bg-white rounded-lg border border-dashed border-gray-300">
+              <p className="text-gray-500 text-sm mb-1">No profiles found</p>
+              <p className="text-gray-400 text-xs">Try adjusting your filters or collecting more profiles.</p>
             </div>
           ) : (
             profiles.map((profile) => (
               <div
                 key={profile.id}
-                className="bg-white rounded-lg p-3 shadow-sm border border-gray-200 flex items-center justify-between">
+                className="bg-white rounded-lg p-3 shadow-sm border border-gray-200 flex items-center justify-between hover:shadow-md transition-shadow group">
                 <button
                   onClick={() => onSelectProfile(profile)}
                   className="text-left flex-1 pr-3">
-                  <p className="font-medium text-gray-800">{profile.name}</p>
-                  <p className="text-xs text-gray-500">
+                  <p className="font-medium text-gray-800 group-hover:text-blue-600 transition-colors">{profile.name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
                     {profile.country || "Unknown location"} •{" "}
                     {profile.interests?.slice(0, 2).join(", ") || "No interests"}
                   </p>
                 </button>
-                <div className="flex gap-1">
+                <div className="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={() => onViewMessages(profile.id)}
-                    className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-700">
+                    className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 border border-gray-200 font-medium transition-colors">
                     History
                   </button>
                   <button
                     onClick={() => onSendMessage(profile)}
                     disabled={isSending}
-                    className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                    {isSending ? "Sending..." : "Send"}
+                    className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                    {isSending ? "..." : "Send"}
                   </button>
                 </div>
               </div>
@@ -1004,6 +1018,7 @@ function ProfilesTab({
           )}
         </div>
       </div>
+    </div>
   )
 }
 
@@ -1030,22 +1045,20 @@ function MessagesTab({
         <div className="flex gap-2 flex-wrap">
           <button
             onClick={() => onProfileSelect(null)}
-            className={`px-4 py-2 text-sm rounded-md transition-colors font-medium ${
-              selectedProfileId === null
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-            }`}>
+            className={`px-4 py-2 text-sm rounded-md transition-colors font-medium ${selectedProfileId === null
+              ? "bg-blue-600 text-white"
+              : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              }`}>
             All Messages
           </button>
           {profiles.slice(0, 10).map((profile) => (
             <button
               key={profile.id}
               onClick={() => onProfileSelect(profile.id)}
-              className={`px-4 py-2 text-sm rounded-md transition-colors font-medium ${
-                selectedProfileId === profile.id
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-              }`}>
+              className={`px-4 py-2 text-sm rounded-md transition-colors font-medium ${selectedProfileId === profile.id
+                ? "bg-blue-600 text-white"
+                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}>
               {profile.name}
             </button>
           ))}
@@ -1068,21 +1081,19 @@ function MessagesTab({
             filteredHistory.map((msg) => (
               <div
                 key={msg.id}
-                className={`bg-white rounded-lg p-5 shadow-sm border-2 ${
-                  msg.success
-                    ? "border-green-200 bg-green-50"
-                    : "border-red-200 bg-red-50"
-                }`}>
+                className={`bg-white rounded-lg p-5 shadow-sm border-2 ${msg.success
+                  ? "border-green-200 bg-green-50"
+                  : "border-red-200 bg-red-50"
+                  }`}>
                 <div className="flex justify-between items-start mb-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <span className="font-semibold text-base text-gray-800">{msg.profileName}</span>
                       <span
-                        className={`text-sm px-3 py-1 rounded ${
-                          msg.success
-                            ? "bg-green-200 text-green-700"
-                            : "bg-red-200 text-red-700"
-                        }`}>
+                        className={`text-sm px-3 py-1 rounded ${msg.success
+                          ? "bg-green-200 text-green-700"
+                          : "bg-red-200 text-red-700"
+                          }`}>
                         {msg.success ? "[OK] Sent" : "[ERR] Failed"}
                       </span>
                     </div>
